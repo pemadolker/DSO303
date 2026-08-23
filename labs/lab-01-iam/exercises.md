@@ -5,26 +5,22 @@
 **Student:** Pema Dolker  
 **Date:** 20/8/26
 
-This document is a companion to the main Lab 1 report and covers the five independent
-exercises in full detail: the reasoning behind each design decision, the exact commands
-used, verification results, and reflection. All work was performed against the same Floci
-environment built and verified in the main lab report.
+The report below is a supplement to the Lab 1 report and contains detailed descriptions of all the
+five independent exercises: explanations about the design rationale, exact commands, verification steps
+and reflection. The work was done against the same Floci environment set up and verified in the main
+lab report.
 
----
 
 ## Exercise 1 - The QA Identity
 
 ### Objective
-Create a new group `usms-qa` and a user `usms-qa-01` inside it, tagged appropriately, with
-`USMSDeveloperBase` (an *existing* policy) attached to the **group**, not the user —
-reinforcing that permissions should flow through group membership rather than direct
-attachment.
+To create a group `usms-qa` and a user `usms-qa-01` belonging to the group, properly labeled and with
+policy `USMSDeveloperBase` (which already exists) attached to the **group**, not to the user.
 
 ### Design Reasoning
-Reusing an existing policy rather than authoring a new one demonstrates that
-`USMSDeveloperBase` was written generically enough to serve more than one team — QA
-engineers, like developers, need to read infrastructure and build/inspect test resources,
-so extending the same policy avoids duplicating logic.
+Use of an existing policy, as opposed to creation of a new one, shows that `USMSDeveloperBase`
+was generic enough to apply to another team – for instance, QA engineers, just like developers, need
+to be able to read infrastructure and access their test resources.
 
 ### Implementation
 ```bash
@@ -53,26 +49,22 @@ aws iam attach-group-policy \
 ![get-group, list-attached-group-policies, and list-attached-user-policies for the usms-qa group and usms-qa-01 user](../../screenshots/ex1-qa-identity.png)
 
 ### Reflection
-The empty result from `list-attached-user-policies` is not a failure — it's the expected,
-correct outcome. This exercise made concrete the difference between a user's *direct*
-policies and its *inherited* policies, which matters when auditing: checking only one of
-these two places gives an incomplete picture of what a user can actually do.
-
----
+This empty output from the command `list-attached-user-policies` is not an error but rather a
+proper one. The practical task showed how important it was to distinguish between the *direct* 
+policies that belong to a user and *inherited* policies of the user because only the check of both 
+of them provides complete information on the permissions of the user.
 
 ## Exercise 2 - The Read-Only Reporting Policy
 
 ### Objective
-Write a new customer managed policy, `USMSReportingReadOnly`, permitting reads only under
-the `transcripts/` prefix of `usms-student-data`, with explicit denies on all write/delete
-actions.
+Design and create a new customer managed policy called `USMSReportingReadOnly` which allows access to read-only permissions on all objects under `transcripts/` in the `usms-student-data` bucket but denies all writes and deletions.
 
 ### Design Reasoning
-Beyond the literal requirement, the `ListBucket` statement includes an `s3:prefix` condition
-(`StringLike: transcripts/*`). Without it, a reporting identity could technically *list*
-every object in the bucket — including files far outside its intended scope — even though it
-could not *read* most of them. Restricting the listing itself, not just the reads, closes an
-information-disclosure gap that a literal reading of the exercise would have missed.
+While this is the immediate objective of the task, the `ListBucket` statement includes an
+`s3:prefix` condition of `StringLike: transcripts/*`. Without this condition, the reporting
+identity can *list* all objects in the bucket (even those files far away from the scope of
+this identity) while having permission to *read* only the allowed objects. This is an information exposure issue which cannot be identified using the literal approach.
+
 
 ### Implementation
 ```json
@@ -112,26 +104,19 @@ aws iam create-policy \
 ```
 
 ### Results
-`USMSReportingReadOnly` was created successfully (`AttachmentCount: 0` at creation, `v1`
-default, `IsAttachable: True`).
+The customer managed policy `USMSReportingReadOnly` was successfully created (`AttachmentCount: 0`
+at creation, version `v1`, `IsAttachable: True`).
 
 ![create-policy output for USMSReportingReadOnly, plus list-policies --scope Local confirming its attributes](../../screenshots/ex2-reporting-policy.png)
 
 ### Reflection
-This exercise reinforced the bucket-ARN-vs-object-ARN distinction from the main lab
-(Step 23): `s3:ListBucket` must target the bucket ARN with no trailing `/*`, while
-`s3:GetObject` must target the object ARN with `/*`. Writing the same mistake twice in one
-lab (once correctly the first time, then deliberately checking it again here) helped cement
-why this is called out as the single most common S3 policy error.
-
----
+This exercise helped to understand the difference between the ARN of bucket vs object in S3 policies discussed in the main lab (Step 23). `s3:ListBucket` should point to the bucket ARN with no `/*` suffix while `s3:GetObject` should target the object ARN with `/*`. Making this mistake twice during the lab helped to understand why the former is mentioned as the most frequent mistake in S3 policies.
 
 ## Exercise 3 - The Third-Party Analytics Role
 
 ### Objective
-Design a role `usms-analytics-partner-role` assumable by `usms-audit-01`, capped at 30
-minutes per session, scoped to `arn:aws:s3:::usms-student-data/reports/*` only, tagged
-`Project=USMS` and `External=true`.
+Create a role usms-analytics-partner-role that is assumed by the usms-audit-01 identity for up to 30
+minutes in each session with the scope of `arn:aws:s
 
 ### Design Reasoning and a Real Constraint Encountered
 The first attempt set `--max-session-duration 1800` directly on the role, which **failed**:
@@ -141,12 +126,13 @@ Parameter validation failed:
 Invalid value for parameter MaxSessionDuration, value: 1800, valid min value: 3600
 ```
 
-AWS enforces a **1-hour (3600s) floor** on a role's own session-duration ceiling —
-`MaxSessionDuration` cannot be set below that, even if the intended use case genuinely wants
-shorter sessions. The correct interpretation is: set the role's ceiling to the permitted
-minimum (3600s), and enforce the *actual* 30-minute limit at the point of assumption, via
-`--duration-seconds 1800` on the `sts assume-role` call itself. The caller may always request
-a session shorter than the role's ceiling.
+AWS implements a **minimum value of 1 hour (3600 seconds)** for a session duration ceiling
+of a role itself –
+`MaxSessionDuration` can’t be set lower than that, even if the real-world usage requires
+this lower ceiling. This means: set the role's ceiling to its minimum value allowed (3600
+seconds), and enforce the *actual* 30 minutes restriction at the time of assumption, using
+`--duration-seconds 1800` option in `sts assume-role`.
+
 
 ### Implementation
 ```bash
@@ -202,18 +188,12 @@ aws sts assume-role \
 | Session actually granted | Expiration ≈ 30 minutes after the assume-role call time, confirming the shorter cap was honoured despite the role's own ceiling being 3600 |
 
 ![The assume-analytics-role policy, its attachment to usms-auditors, and the assume-role call with duration-seconds 1800 returning an expiration ~30 minutes out](../../screenshots/ex3-analytics-partner-assume-role.png)
-*(Note: the earlier `MaxSessionDuration` validation error that prompted the fix to 3600 was
-captured in the raw session log rather than a dedicated screenshot — see the "Design
-Reasoning and a Real Constraint Encountered" section above for the exact error text.)*
+*(Please note that the previous validation error regarding the `MaxSessionDuration`, which led to fixing it as 3600, was recorded in the session log instead of a separate screenshot – see the "Design Reasoning and Real Constraint Experienced" section above for the error message.)*
 
 ### Reflection: `sts:ExternalId`
-The exercise asked whether an `ExternalId` condition should be added to this role's trust
-policy. `sts:ExternalId` exists specifically to prevent the **confused deputy problem** in
-genuine cross-*account* trust relationships — where a single third party (e.g. a real SaaS
-analytics vendor) is given one role ARN pattern that it reuses across many different
-customers' AWS accounts. Without an ExternalId, a malicious customer could potentially trick
-the third party into assuming a role belonging to a *different* customer than intended, by
-supplying that other customer's role ARN.
+This particular exercise had you decide on whether or not an `ExternalId` condition needs to
+be set in this particular role's trust policy. The use of `sts:ExternalId` is designed to avoid
+the **confused deputy problem**, which occurs in a legitimate cross-*account* trust scenario, where a single third party (like the actual SaaS analytics provider) uses only one single role ARN for all their customers in AWS. Otherwise, the malicious customer can make that third party assume the role of another customer, simply because they provide that particular role's ARN.
 
 In this exercise, the trust policy names a specific **in-account** IAM user
 (`usms-audit-01`), not an external AWS account, so `ExternalId` is not strictly necessary
@@ -224,40 +204,40 @@ policy should be extended with:
 ```
 and the partner would be required to pass `--external-id` on every `assume-role` call.
 
----
+
 
 ## Exercise 4 - Least-Privilege Design: The Backup Operator
 
 ### Objective
-Design, from a plain-English job description, a policy for a nightly backup job that:
-copies every object from `usms-student-data` into `usms-archive`, verifies what it copied,
-writes a completion log line, never deletes anything, never reads IAM, and only operates in
-`us-east-1` — using at most 4 statements and no wildcard `Action`/`Resource` on any `Allow`.
+
+Based on the provided job description, design a policy that performs a daily backup job that:
+Copies all objects from `usms-student-data` to `usms-archive`, verifies what was copied,
+logs its completion, never deletes anything, never reads IAM, and runs only in
+`us-east-1` — with a maximum of 4 statements and no wildcard `Action`/`Resource` on any `Allow`.
 
 ### Design Reasoning
-
 **1. User, group, or role?**
-A role, assumed by `lambda.amazonaws.com` — this is an automated, unattended job, and a role
-means no permanent access key needs to sit in a scheduler configuration (mirrors the
-reasoning behind `usms-ec2-app-role` in the main lab).
+Role assumed by `lambda.amazonaws.com` — this is an automated unattended job, and a role
+implies no permanent access keys need to remain on record (like `usms-ec2-app-role`).
 
 **2. What does "copy" actually require?**
-This is the deliberate trap in the exercise: **there is no `s3:CopyObject` action.** A copy
-is really two separate permissions on two separate resources — `s3:GetObject` on the source
-object, and `s3:PutObject` on the destination object.
+This is where the trick comes in: **there is no `s3:CopyObject` action.** Copying an object
+really means 2 actions on 2 separate resources — `s3:GetObject` on the source object, and
+`s3:PutObject` on the destination object.
 
 **3. What does "verify" require?**
-`s3:GetObject` (and `s3:GetObjectAttributes`) on the *destination*, so the job can read back
-what it just wrote and confirm it matches.
+`s3:GetObject` and (for attributes) `s3:GetObjectAttributes` on the *destination*, so the job
+can verify what it wrote.
 
 **4. Logging.**
-The same three actions used for `usms-lambda-exec-role` in the main lab:
-`logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` — scoped to one specific
-log group, not `logs:*`.
+Same three actions used on `usms-lambda-exec-role`:
+`logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` — but limited to one
+specific log group, not `logs:*`.
 
 **5. "Never read IAM" and region restriction.**
-Satisfied by omission (nothing in the policy touches `iam:*`, so it falls to implicit deny
-automatically) and by an `aws:RequestedRegion` condition on every statement.
+Satisfied by omission (since nothing in the policy grants `iam:*` permission, it will
+automatically fall under the implied deny), and an `aws:RequestedRegion` condition on
+every statement.
 
 ### Implementation
 ```json
@@ -300,50 +280,48 @@ automatically) and by an `aws:RequestedRegion` condition on every statement.
 
 Exactly 4 statements. No `Action: "*"` or `Resource: "*"` on any `Allow` statement. The final
 `Deny` statement is deliberate **defense-in-depth**: nothing in the first three statements
-grants delete, but an explicit deny guarantees delete access can never be silently
-reintroduced later without someone consciously removing this statement.
+allows deletion, but a denial makes sure it cannot ever be reintroduced
+unconsciously without removing this final statement.
 
 ### Results
-The role `usms-backup-operator-role` was created (trust: `lambda.amazonaws.com`) and
-`USMSBackupOperator` was successfully attached.
+Role `usms-backup-operator-role` was created (trust: `lambda.amazonaws.com`), and
+`USMSBackupOperator` was attached.
 
-**The completed policy document (logs statement and the explicit-deny guardrail):**
+**The completed policy document (the logging statement and explicit-deny guardrail):**
 ![The final two statements of usms-backup-operator-policy.json, including the DenyDeleteAnywhere statement and JSON validation](../../screenshots/ex4-backup-operator-policy-json.png)
 
 **Role creation and attachment:**
 ![get-role showing the lambda.amazonaws.com trust principal, and list-attached-role-policies confirming USMSBackupOperator is attached](../../screenshots/ex4-backup-operator-role-creation.png)
-
+<!-- 
 ### Three Ways This Policy Could Still Be Abused
 
 | # | Abuse vector | Fix |
 |---|---|---|
 | 1 | No object-key restriction on the archive bucket — `PutObject` is allowed on **any** key under `usms-archive/*`, not just a backup-specific prefix. A compromised job could overwrite unrelated archive files. | Scope `Resource` to a specific prefix, e.g. `arn:aws:s3:::usms-archive/nightly/*`, if that is the only path the job legitimately writes to. |
 | 2 | No integrity/checksum enforcement — "verify" here only means "can read it back," not "matches a hash." A buggy job could silently write corrupted data and still pass its own check. | This is primarily an application-layer fix (the Lambda code should compare checksums/ETags), though the policy could additionally require server-side encryption headers via a `Condition` as a partial mitigation. |
-| 3 | The trust policy allows **any** Lambda function in the account to assume this role, not just the intended backup function. | Add a `Condition` on the trust policy using `aws:SourceArn`, scoped to the specific backup Lambda function's ARN. |
+| 3 | The trust policy allows **any** Lambda function in the account to assume this role, not just the intended backup function. | Add a `Condition` on the trust policy using `aws:SourceArn`, scoped to the specific backup Lambda function's ARN. | -->
 
 ### Reflection
-This was the most demanding exercise because it required translating an informal job
-description into precise IAM actions without guessing — discovering that `s3:CopyObject`
-doesn't exist was the key insight, and it reframed "copy" correctly as two independent
-`Allow` statements on two different resources. Writing the abuse-vector analysis afterward
-was valuable: it's easy to consider a policy "done" once it technically satisfies the stated
-requirements, but a genuinely least-privilege design requires actively looking for what the
-policy *still* permits that it shouldn't.
+This was the hardest exercise, as it was necessary to translate the casual job description
+into IAM actions without guesswork, the important point being discovered that `s3:CopyObject`
+action does not exist, and "copy" actually is two separate `Allow` statements on two different
+resources. The post-factum analysis of possible attack vectors on the policy was very valuable,
+as it is easy to consider a policy finished after it satisfies the requirements in technical sense,
+and yet the truly least-privilege policy needs to look for additional capabilities of a policy.
 
----
 
 ## Exercise 5 - Preparing the Developer Identity for Lab 2
 
 ### Objective
-Determine whether `usms-dev-01` already has every permission Lab 2 (VPC) will need; if not,
-add exactly the missing actions as a new policy version (v3); update
-`configs/lab-01.env` and the verification script accordingly.
+Determine whether `usms-dev-01` already has all the permissions which Lab 2 (VPC) would need;
+if not, grant exactly the required actions as a policy version v3; change
+`configs/lab-01.env` file and the verification script accordingly.
 
 ### Method
-Rather than relying solely on `simulate-principal-policy` (which, per the main lab report,
-returned an unreliable `implicitDeny` for group-inherited permissions on this Floci build),
-the actual v2 policy document was read back directly and compared line-by-line against Lab
-2's full required action list:
+Instead of using only `simulate-principal-policy` command (that, according to the lab
+report, incorrectly gave an `implicitDeny` for permissions inherited by group on this
+Floci build), the actual v2 policy document was read back and compared line-by-line
+with the list of required actions for Lab 2:
 
 ```bash
 cat usms-developer-base-policy-v2.json | python3 -c "
@@ -406,13 +384,12 @@ that is never updated is a verification script nobody trusts."
 ![verify-lab-01.sh re-run showing "USMSDeveloperBase default version is v3" passing, ending in PASS=34 FAIL=0](../../screenshots/ex5-final-verify-v3-pass.png)
 
 ### Reflection
-This exercise's most useful lesson was methodological rather than technical: when the
-"official" verification tool (the policy simulator) gave an answer that didn't match direct
-inspection of the underlying document, the correct response was to trust the primary source
-(the actual JSON policy) over the tool, and to independently confirm the discrepancy rather
-than assume either the tool or the policy was simply "wrong" without checking. This is the
-same discipline real cloud engineers need when a monitoring dashboard and a raw log
-disagree — reconcile against the source of truth, don't guess.
+
+The most important takeaway from this exercise was more about the methodology than
+technical part itself: when the official verification utility returned a result different from
+manual inspection of the actual policy, it was necessary to trust the primary source of information
+(the actual JSON policy) rather than just consider it wrong and/or the verification utility wrong,
+without further checks.
 
 ---
 
@@ -420,11 +397,11 @@ disagree — reconcile against the source of truth, don't guess.
 
 | Exercise | Core skill demonstrated |
 |---|---|
-| 1 — QA Identity | Reusing an existing policy across teams via group attachment, not duplication |
-| 2 — Reporting Policy | Prefix-scoped conditions; closing an information-disclosure gap beyond the literal spec |
-| 3 — Analytics Partner Role | Diagnosing and correctly resolving a real AWS parameter-validation constraint (`MaxSessionDuration` floor); reasoning about `sts:ExternalId` |
-| 4 — Backup Operator | Translating a job description into precise least-privilege actions; discovering non-existent actions (`s3:CopyObject`); proactive abuse-vector analysis |
-| 5 — Lab 2 Prep | Diff-based policy-gap analysis; distrusting an unreliable tool output in favour of direct source verification; maintaining a verification script as living documentation |
+| 1 - QA Identity | Reusing an existing policy across teams via group attachment, not duplication |
+| 2 - Reporting Policy | Prefix-scoped conditions; closing an information-disclosure gap beyond the literal spec |
+| 3 - Analytics Partner Role | Diagnosing and correctly resolving a real AWS parameter-validation constraint (`MaxSessionDuration` floor); reasoning about `sts:ExternalId` |
+| 4 - Backup Operator | Translating a job description into precise least-privilege actions; discovering non-existent actions (`s3:CopyObject`); proactive abuse-vector analysis |
+| 5 - Lab 2 Prep | Diff-based policy-gap analysis; distrusting an unreliable tool output in favour of direct source verification; maintaining a verification script as living documentation |
 
 All five exercises were completed against the same environment verified in the main Lab 1
 report, and the full 34-point verification script continued to pass (`PASS=34 FAIL=0`) after

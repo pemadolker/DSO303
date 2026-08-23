@@ -97,32 +97,11 @@ here for reference.
 **Anatomy of an ARN** (Amazon Resource Name - the globally unique address of any AWS
 resource):
 
-```
-arn:aws:iam::000000000000:user/usms-dev-01
- │   │   │  │       │           └── resource (type/name)
- │   │   │  │       └────────────── account id (12 digits)
- │   │   │  └────────────────────── region — EMPTY for IAM, since it is a global service
- │   │   └───────────────────────── service (iam, s3, ec2, sts, ...)
- │   └───────────────────────────── partition (aws | aws-cn | aws-us-gov)
- └───────────────────────────────── literal prefix, always "arn"
-```
+![alt text](../../screenshots/image.png)
 
 **Policy evaluation logic** - the two rules that govern every access decision in AWS:
 
-```
-                For every request
-                       │
-                       ▼
-        Is there an explicit DENY anywhere?
-              /                    \
-           YES                      NO
-            │                        │
-        ✗ DENIED          Is there an explicit ALLOW?
-                              /              \
-                            NO               YES
-                             │                 │
-                    ✗ DENIED (default)     ✓ ALLOWED
-```
+![alt text](../../screenshots/image-1.png)
 
 1. **Default deny** - no matching policy statement means no access; permissions are never
    implicit.
@@ -132,7 +111,7 @@ arn:aws:iam::000000000000:user/usms-dev-01
    attached to a developer later, the explicit deny on `iam:CreateUser`,
    `iam:AttachUserPolicy`, etc. would still hold.
 
-**Permissions policy vs. trust policy** — the distinction that governs every role built in
+**Permissions policy vs. trust policy** - the distinction that governs every role built in
 this lab:
 
 | | Permissions policy | Trust policy |
@@ -150,6 +129,7 @@ intended caller (or vice versa).
 
 
 **Part A -Setting up the environment.**
+
 Before even considering starting work with IAM, I needed to set up the proper working AWS environment locally. First, I made a project folder structure (policies/, configs/, scripts/, outputs/), added .gitignore file and ran git init before creating any files that might contain sensitive information, and proved that ignoring works as I wanted it to by committing a test secret file and then verifying that it does not appear in git status.
  
 Floci runs with Docker Compose, and not with the `floci start` command, since the latter does not activate durable storage mode by default and its state is stored in RAM. I activated that mode in docker-compose.yml by setting FLOCI_STORAGE_MODE=hybrid and a bind mount in the container (~/floci-data) and created simple floci-up.sh / floci-down.sh scripts that allow me to run up and shut down the floci container without having to remember the flag every time.
@@ -182,189 +162,172 @@ I executed `sts assume-role`, looked at the temporary credentials returned by it
 
 **Environment bootstrap - `.gitignore` and Git init, before any secret existed**
 ![.gitignore write, git init, and proof that a fake secret was blocked](../../screenshots/01-gitignore-secret-proof.png) 
-`.gitignore` was written and the repository initialised first. A fake secret file was
-written to `outputs/` to prove the ignore rule worked (`git status` never showed it, and
-`git check-ignore -v` named the exact rule that blocked it) before it was deleted again.
+The `.gitignore` was created and repository initiated. The dummy file with secret content was written to `outputs/` folder for testing of the ignore rule (`git status` did not show this file, `git check-ignore -v` showed exact ignore rule that prevents inclusion of this file) and then deleted.
 
 **`configs/course.env` committed, and the first Git commit**
 ![git commit of .gitignore, and the full contents of configs/course.env](../../screenshots/02-git-commit-course-env.png)
-The first commit (`chore: ignore secrets before the repo can hold any`) is visible in
-`git log`, followed by the shared, secret-free `course.env` configuration file.
+The first commit message ("chore: ignore secrets before the repo can contain any") can be seen using `git log` command, followed by the shared configuration file without secrets `course.env`.
 
 **`floci-up.sh` / `floci-down.sh` written**
 ![Creation of the idempotent start/stop scripts](../../screenshots/03-floci-up-down-scripts.png)
-The two lifecycle scripts that bring Floci up on durable storage and pause it without losing
-state.
+Two lifecycle scripts to start Floci using durable storage and pause it without data loss.
 
 **Environment verification (Docker Compose, Floci status, AWS CLI profile)**
 ![docker compose ps, floci status, health check, aws --version, and the floci CLI profile files](../../screenshots/04-environment-verification.png)
-Three independent confirmations that Floci is healthy (`docker compose ps`, `floci status`,
-and a raw `curl` health check), followed by the AWS CLI version check and the `floci`
-profile's `~/.aws/config` / `~/.aws/credentials` contents.
+Three different tests of Floci health (`docker compose ps`, `floci status` and plain `curl` request for health), followed by the AWS CLI version check and contents of `~/.aws/config` and `~/.aws/credentials` files for `floci` profile.
 
 **Identity check - confirming the Floci root account**
 ![aws sts get-caller-identity returning account 000000000000](../../screenshots/05-identity-check-root.png)
-Confirms the AWS CLI is authenticating against Floci's dummy account
-(`000000000000`), not a real AWS account.
+Confirmation that the AWS CLI authenticates using Floci's fake account (`000000000000`),
+and not an actual AWS account.
 
 **`whoami.sh` helper and `--debug` endpoint proof**
 ![whoami.sh output plus the --debug log confirming requests are sent to localhost](../../screenshots/06-whoami-debug-endpoint.png)
-The `whoami.sh` diagnostic script confirms profile, endpoint, and identity in one call. The
-`--debug` log beneath it independently confirms the CLI is resolving requests through the
-local profile rather than reaching out to real AWS.
+The `whoami.sh` debug script validates the profile, endpoint, and identity all at once.
+The `--debug` log below it separately validates that the CLI resolves requests via the local
+profile and not actual AWS.
+
 
 **Persistence and isolation proof**
 ![floci-down.sh breaking connectivity, floci-up.sh restoring it, and a user surviving a full container restart](../../screenshots/07-persistence-proof.png)
-This single screenshot proves two separate claims required by the lab: **isolation**
-(`Could not connect to the endpoint URL` appears immediately after stopping the container,
-proving the CLI only ever reached the local emulator) and **persistence** (`persistence-check`
-was created, the container was fully restarted via `docker compose restart`, and the user
-was still retrievable afterward).
+One image here proves both of two independent claims from the lab exercise: **isolation**
+(`Could not connect to the endpoint URL` follows right after stopping the container, showing
+that the CLI never accessed anything but the local emulation) and **persistence**
+(`persistence-check` was created, the container was restarted via `docker compose restart`,
+and the user was still accessible after that).
 
 **Persistent data on disk, and AWS CLI exit codes**
 ![ls -la ~/floci-data showing real files, and exit code checks for success (0) and NoSuchEntity (254)](../../screenshots/08-floci-data-contents.png)
-Confirms `~/floci-data` contains genuine files (not an empty directory), and demonstrates
-the AWS CLI's exit-code convention: `0` for success, `254` for a service-level error such as
-a missing IAM entity.
+Confirm that `~/floci-data` has actual contents (rather than being empty), and
+demonstrates the AWS CLI return code protocol: `0` for successful execution, `254` for an
+AWS service level failure, like missing IAM identity.
 
 **Storage diagnostic script - all six checks passing**
 ![floci-storage-check.sh output showing six ok sections](../../screenshots/09-storage-check-script.png)
-The custom diagnostic script confirms every layer of the durability configuration
-independently: container ownership, storage mode, bind mount, sidecar storage path, no
-orphaned volumes, and a non-empty host state directory.
+The diagnostic script verifies each layer of the durable config independently: container
+ownership, storage type, bind-mount, sidecar storage location, no orphaned volumes, and non-empty
+host state directory.
 
 **Part A committed, with Git secret-hygiene confirmed**
 ![git add/commit for Part A, and git ls-files confirming only safe files are tracked](../../screenshots/10-part-a-commit-git-hygiene.png)
-The full environment bootstrap was committed, and `git ls-files | grep` confirms only
-`configs/course.env` (secret-free) and `outputs/.gitkeep` (an empty placeholder) are tracked
-under those two sensitive paths.
+The complete environment bootstrap commit is done, and `git ls-files | grep` reveals that only
+`configs/course.env` (no secrets) and `outputs/.gitkeep` (an empty file) are tracked at those two
+potentially sensitive locations.
 
 **Empty IAM account, then group creation**
 ![list-users returning an empty array, and create-group for all three groups](../../screenshots/11-list-users-create-groups.png)
-Confirms the account started with zero IAM users before any resources were created, then
-shows the three `usms-` groups being created.
+Verifies that there were zero IAM users at the start, and then proceeds to create the three
+`usms-` groups.
 
 **All three groups verified**
 ![list-groups --output table showing usms-admins, usms-developers, usms-auditors](../../screenshots/12-list-groups-table.png)
 
 **User creation with captured ARNs**
 ![create-group, create-user x3 with ARN capture, and list-users in table format](../../screenshots/13-create-users-list-table.png)
-All three IAM users (`usms-admin-01`, `usms-dev-01`, `usms-audit-01`) created with tags, ARNs
-captured into shell variables, and confirmed via `list-users --output table`.
+All three IAM users (`usms-admin-01`, `usms-dev-01`, `usms-audit-01`) have been created, tags assigned,
+ARNs saved as shell variables, and list verified via `list-users --output table`.
 
 **`USMSDeveloperBase` created and attached to two groups**
 ![create-policy for USMSDeveloperBase, list-attached-group-policies, and get-policy showing AttachmentCount 2](../../screenshots/15-developer-base-policy-attach.png)
-`get-policy` confirms `AttachmentCount: 2`, proving the policy was successfully attached to
-both `usms-developers` and `usms-admins`.
+`get-policy` verifies `AttachmentCount: 2`, meaning that the policy is now successfully attached
+to both `usms-developers` and `usms-admins` groups.
+
 
 **S3 data policy creation**
 ![usms-student-data-rw-policy.json and its creation via create-policy](../../screenshots/16-s3-policy-creation.png)
-The `USMSStudentDataReadWrite` policy, distinguishing bucket-level and object-level S3 ARNs.
+The policy for `USMSStudentDataReadWrite`, differentiating between bucket-level and object-level
+S3 ARNs.
 
 **`--generate-cli-skeleton` discovery**
 ![aws iam create-role --generate-cli-skeleton output](../../screenshots/17-generate-cli-skeleton.png)
 
 **Inline policy with a policy variable**
 ![usms-self-manage-credentials.json using ${aws:username}, put-user-policy, and list-user-policies](../../screenshots/18-inline-policy-self-manage.png)
-The `${aws:username}` variable survived the heredoc unexpanded (confirmed via `grep` before
-attaching), and `list-user-policies` confirms the inline policy attached to `usms-dev-01`.
+`${aws:username}` was not expanded during heredoc (verified using `grep` prior to attaching),
+and `list-user-policies` verifies the inline policy attached to `usms-dev-01`.
 
 **Auditing a user's full permission picture**
 ![groups/attached/inline/access-keys audit commands, and get-policy-version reading back the actual policy document](../../screenshots/19-audit-policy-document.png)
-Demonstrates that a complete permissions audit requires checking group membership, attached
-policies, and inline policies separately — no single call gives the full picture.
+Shows that a comprehensive permissions review involves separately querying group memberships,
+attached policies, and inline policies – none alone will provide the full picture.
 
 **Policy versioning**
 ![list-policy-versions showing v1 and v2, with v2 as the new default](../../screenshots/20-policy-versions-v1-v2.png)
-`USMSDeveloperBase` after `create-policy-version --set-as-default`: v1 preserved for
-rollback, v2 now the active default.
+`USMSDeveloperBase` after `create-policy-version --set-as-default`: v1 kept for rollback;
+v2 is now the default version in effect.
 
 **EC2 role, permissions attachment, and instance profile**
 ![get-role showing ec2.amazonaws.com trust, list-attached-role-policies, and get-instance-profile confirming the role is wrapped correctly](../../screenshots/21-ec2-role-instance-profile.png)
-`usms-ec2-app-role` trusts `ec2.amazonaws.com`, has `USMSStudentDataReadWrite` attached, and
-is correctly wrapped inside `usms-ec2-app-profile` — the wrapper an EC2 instance actually
-attaches to, since a role cannot be assigned to an instance directly.
+`usms-ec2-app-role` is trusted by `ec2.amazonaws.com`, has `USMSStudentDataReadWrite`
+attached to it, and is properly wrapped by `usms-ec2-app-profile` – which the role itself
+cannot be assigned to an EC2 instance but must be wrapped by, since it is a wrapper that
+an EC2 instance attaches to.
 
 **Developer role (trust + assume-permission handshake)**
 ![trust-account-developers.json, create-role usms-developer-role, and the separate USMSAssumeAppRoles policy granting groups permission to call AssumeRole](../../screenshots/22-developer-role-trust-assume.png)
-Demonstrates the two-sided handshake required for role assumption: the role's trust policy
-names `usms-dev-01` specifically, and a *separate* policy (`USMSAssumeAppRoles`) grants
-`usms-developers`/`usms-admins` permission to actually call `sts:AssumeRole` on it.
+Shows the two-sided trust handshake needed for roles – while the role itself specifies
+`usms-dev-01` in its trust policy, another separate policy `USMSAssumeAppRoles` grants
+permissions to `usms-developers`/`usms-admins
 
 **Lambda execution role**
 ![usms-lambda-basic-policy.json, role creation, and list-roles filtered to usms- resources](../../screenshots/23-lambda-role-creation.png)
-`usms-lambda-exec-role`, trusted by `lambda.amazonaws.com`, with permissions to write its own
-CloudWatch Logs and read student data for notification purposes.
+`usms-lambda-exec-role`, trusteed by `lambda.amazonaws.com`, has permission to log to its own CloudWatch Logs and access students' data for notifications.
+
 
 **Temporary credentials via STS `assume-role`**
 ![assume-role output showing an ASIA-prefixed access key, session token, and one-hour expiration](../../screenshots/24-sts-assume-role-temp-creds.png)
-The four tell-tale signs of temporary credentials: an `ASIA`-prefixed access key (vs. `AKIA`
-for permanent keys), a `SessionToken`, an `Expiration` roughly one hour out, and an
-`AssumedRoleUser.Arn` in the distinct `assumed-role/...` ARN shape.
+Four characteristic attributes of temporary credentials: an `ASIA`-prefixed access key (versus `AKIA`
+for long-term credentials), `SessionToken`, `Expiration` in about an hour, and `AssumedRoleUser.Arn` in the distinctive `assumed-role/...` format.
 
 **Acting as the assumed role, then reverting**
 ![get-caller-identity showing the assumed-role ARN while temp creds are exported, followed by unset and whoami.sh confirming the return to the root identity](../../screenshots/25-using-temp-creds-and-reverting.png)
-Confirms the temporary credentials were genuinely usable (the identity check reflects the
-assumed role, not the original user), and that reverting via `unset` correctly restored the
-default identity afterward.
+Confirmation of temporary credential usage (the identity check matches assumed role, not the original user)
+and that the revert to default identity through `unset` was done correctly.
 
 **Access key creation and secret protection**
 ![create-access-key redirected straight to outputs/, chmod 600, git check-ignore naming the exact rule, and the resulting usms-dev profile working](../../screenshots/26-access-key-secret-protection.png)
-The real, generated access key was never displayed on screen, was set to owner-only
-permissions (`600`), and `git check-ignore -v` confirms it is blocked from being tracked by
-the `*-access-key.json` rule. A second AWS CLI profile (`usms-dev`) was then configured using
-this key and confirmed working.
+The actual, created access key was never shown in plain text on-screen, was made readable only by
+the owner (`600` permissions), and `git check-ignore -v` confirms it is not tracked by the `*-access-key.json` ignore rule. The AWS CLI profile (`usms-dev`) was then configured with the generated key and verified to work.
 
 **Policy simulator**
 ![simulate-principal-policy showing allowed/explicitDeny/implicitDeny decisions for three test actions](../../screenshots/27-simulate-principal-policy.png)
-`iam:CreateUser` correctly returns `explicitDeny` (blocked by the `DenyDangerousIdentityChanges`
-guardrail statement) and `s3:GetObject` correctly returns `implicitDeny`. `ec2:CreateVpc`
-unexpectedly also returned `implicitDeny`, despite the permission being genuinely granted via
-group membership — discussed as a documented Floci limitation in Section 7.
+`iam:CreateUser` operation is correctly `explicitDeny`ed by the `DenyDangerousIdentityChanges` guardrails statement, while `s3:GetObject` correctly gives `implicitDeny`. Unexpectedly, `ec2:CreateVpc` operation is also `implicitDeny`ed despite being actually granted via group membership. See Section 7 for discussion of this documented Floci issue.
 
 **`configs/lab-01.env` generated**
 ![Full contents of configs/lab-01.env, capturing every ARN built in this lab for reuse by future labs](../../screenshots/28-lab01-env-generated.png)
 
 **Emulator state archived as a fallback snapshot**
 ![tar -czf archiving ~/floci-data after floci native snapshot commands proved unsupported](../../screenshots/29-snapshot-tar-fallback.png)
-Floci's native `snapshot save`/`list` commands returned "Snapshot API not available on this
-server version," so a `tar`-based archive of `~/floci-data` was used instead — a fallback
-that works on every Floci version, since all durable state lives in one directory.
+Floci's built-in `snapshot save`/`list` operations return "Snapshot API not available on this server
+version," so a `tar`-based backup of `~/floci-data` directory was done as a fall-back option,
+which works for any Floci version due to all persistent state residing in one directory.
 
 **Final end-to-end verification script**
 ![verify-lab-01.sh script creation and its first full run, ending in PASS=34 FAIL=0](../../screenshots/30-final-verification-script.png)
-The complete 34-check verification script, covering environment health, persistence
-configuration, every group/user/policy/role, and Git secret hygiene — all passing on the
-first full run after the core lab was completed.
-
-<!-- ### 6.2 AWS Management Console Verification
-
-Floci is a CLI/API-only local emulator with no graphical console, so console screenshots are
-not applicable to this practical (see Section 7 for further discussion of Floci vs. real
-AWS). All verification in this practical was performed via AWS CLI commands, which produce
-the same JSON responses a real AWS account would return. -->
+Here is the whole 34 checks script for verification of environment health, persistence configuration, all groups/users/policies/roles, and Git secret cleanliness – all succeeded in one run after the main lab completion.
 
 
-<!-- 
-### 6.2 Floci vs. Real AWS - Fidelity Observed in This Practical
 
-| Aspect | Behaved like real AWS? | Notes |
-|---|---|---|
-| CLI commands, flags, JSON response shape | Yes | Identical throughout |
-| ARN format | Yes | Account fixed at `000000000000` instead of a real 12-digit ID |
-| Policy document syntax, versioning (5-version limit) | Yes | `create-policy-version` behaved exactly as documented |
-| STS `assume-role` response shape (`ASIA` prefix, session token, expiration) | Yes | Fully faithful |
-| `MaxSessionDuration` minimum enforcement (3600s floor) | Yes | Caught a real design constraint during Exercise 3 |
-| IAM authorization actually enforced on requests | **No** | Floci accepts any non-empty credentials; policies are stored and syntactically validated but not enforced by default |
-| `GetAccountAuthorizationDetails` | **No** | Returned `UnsupportedOperation` on this build |
-| `simulate-principal-policy` with group-inherited permissions | **Partial** | Returned `implicitDeny` for a permission genuinely granted via group membership |
-| `floci snapshot save/list` | **No** | Unsupported on this server version; `tar`-based fallback used instead |
-| AWS Management Console | **N/A** | Floci is CLI/API-only; no graphical console exists |
+### 6.2 AWS Management Console Verification
 
-This table is the practical evidence behind the general caution raised in Section 7: a
-command succeeding inside Floci is proof that the *syntax and API shape* are correct, but is
-**not** proof that a policy would correctly permit or deny a real request on live AWS. -->
-
+ 
+### 6.3 Floci vs. Real AWS
+ 
+Most things behaved exactly like real AWS - same commands, same JSON, same
+ARN format, same policy rules. A few things didn't:
+ 
+| What | Real AWS-like? |
+|---|---|
+| Commands, flags, policy syntax | Yes |
+| STS temporary credentials (`ASIA` key, expiry) | Yes |
+| Policies actually being enforced | No - Floci accepts any request by default |
+| `get-account-authorization-details` | No — unsupported on this build |
+| Policy simulator with group permissions | Partly - gave a wrong `implicitDeny` once |
+| Snapshot save/list | No - used a `tar` backup instead |
+ 
+Basically: a command working in Floci proves the syntax is right, not that
+the policy itself is actually safe. That only comes from reading the policy.
+ 
 
 ## 7. Analysis and Discussion
 
