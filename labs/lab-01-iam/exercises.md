@@ -46,7 +46,7 @@ aws iam attach-group-policy \
 | Policy on group | `aws iam list-attached-group-policies --group-name usms-qa` | `USMSDeveloperBase` attached |
 | Policy NOT on user | `aws iam list-attached-user-policies --user-name usms-qa-01` | Empty (correct) |
 
-![get-group, list-attached-group-policies, and list-attached-user-policies for the usms-qa group and usms-qa-01 user](../../screenshots/ex1-qa-identity.png)
+![get-group, list-attached-group-policies, and list-attached-user-policies for the usms-qa group and usms-qa-01 user](../../screenshots/lab1/ex1-qa-identity.png)
 
 ### Reflection
 This empty output from the command `list-attached-user-policies` is not an error but rather a
@@ -107,7 +107,7 @@ aws iam create-policy \
 The customer managed policy `USMSReportingReadOnly` was successfully created (`AttachmentCount: 0`
 at creation, version `v1`, `IsAttachable: True`).
 
-![create-policy output for USMSReportingReadOnly, plus list-policies --scope Local confirming its attributes](../../screenshots/ex2-reporting-policy.png)
+![create-policy output for USMSReportingReadOnly, plus list-policies --scope Local confirming its attributes](../../screenshots/lab1/ex2-reporting-policy.png)
 
 ### Reflection
 This exercise helped to understand the difference between the ARN of bucket vs object in S3 policies discussed in the main lab (Step 23). `s3:ListBucket` should point to the bucket ARN with no `/*` suffix while `s3:GetObject` should target the object ARN with `/*`. Making this mistake twice during the lab helped to understand why the former is mentioned as the most frequent mistake in S3 policies.
@@ -187,7 +187,7 @@ aws sts assume-role \
 | Trust policy principal | `usms-audit-01` |
 | Session actually granted | Expiration ≈ 30 minutes after the assume-role call time, confirming the shorter cap was honoured despite the role's own ceiling being 3600 |
 
-![The assume-analytics-role policy, its attachment to usms-auditors, and the assume-role call with duration-seconds 1800 returning an expiration ~30 minutes out](../../screenshots/ex3-analytics-partner-assume-role.png)
+![The assume-analytics-role policy, its attachment to usms-auditors, and the assume-role call with duration-seconds 1800 returning an expiration ~30 minutes out](../../screenshots/lab1/ex3-analytics-partner-assume-role.png)
 *(Please note that the previous validation error regarding the `MaxSessionDuration`, which led to fixing it as 3600, was recorded in the session log instead of a separate screenshot – see the "Design Reasoning and Real Constraint Experienced" section above for the error message.)*
 
 ### Reflection: `sts:ExternalId`
@@ -288,10 +288,10 @@ Role `usms-backup-operator-role` was created (trust: `lambda.amazonaws.com`), an
 `USMSBackupOperator` was attached.
 
 **The completed policy document (the logging statement and explicit-deny guardrail):**
-![The final two statements of usms-backup-operator-policy.json, including the DenyDeleteAnywhere statement and JSON validation](../../screenshots/ex4-backup-operator-policy-json.png)
+![The final two statements of usms-backup-operator-policy.json, including the DenyDeleteAnywhere statement and JSON validation](../../screenshots/lab1/ex4-backup-operator-policy-json.png)
 
 **Role creation and attachment:**
-![get-role showing the lambda.amazonaws.com trust principal, and list-attached-role-policies confirming USMSBackupOperator is attached](../../screenshots/ex4-backup-operator-role-creation.png)
+![get-role showing the lambda.amazonaws.com trust principal, and list-attached-role-policies confirming USMSBackupOperator is attached](../../screenshots/lab1/ex4-backup-operator-role-creation.png)
 <!-- 
 ### Three Ways This Policy Could Still Be Abused
 
@@ -375,13 +375,13 @@ that is never updated is a verification script nobody trusts."
 | `verify-lab-01.sh` updated and re-run | `PASS=34 FAIL=0` with the v3 check passing | ✔ Confirmed |
 
 **The "before" state - reading back v2's 13 actions directly, to identify the gap by inspection rather than guessing:**
-![Python one-liner printing all 13 actions in v2's BuildNetworkingForLab02 statement](../../screenshots/ex5-v2-before-state.png)
+![Python one-liner printing all 13 actions in v2's BuildNetworkingForLab02 statement](../../screenshots/lab1/ex5-v2-before-state.png)
 
 **The version bump — v1/v2/v3, with v3 now the default:**
-![list-policy-versions showing v1 (False), v2 (False), v3 (True)](../../screenshots/ex5-policy-versions-v3.png)
+![list-policy-versions showing v1 (False), v2 (False), v3 (True)](../../screenshots/lab1/ex5-policy-versions-v3.png)
 
 **Final verification confirming the updated check passes:**
-![verify-lab-01.sh re-run showing "USMSDeveloperBase default version is v3" passing, ending in PASS=34 FAIL=0](../../screenshots/ex5-final-verify-v3-pass.png)
+![verify-lab-01.sh re-run showing "USMSDeveloperBase default version is v3" passing, ending in PASS=34 FAIL=0](../../screenshots/lab1/ex5-final-verify-v3-pass.png)
 
 ### Reflection
 
