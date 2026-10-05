@@ -1,0 +1,13 @@
+[
+  {
+    "IpProtocol": "tcp",
+    "FromPort": 80,
+    "ToPort": 80,
+    "UserIdGroupPairs": [
+      {
+        "GroupId": "sg-6091af79bf17bcc64",
+        "Description": "HTTP from the USMS web tier (usms-app-sg) - the only caller of the enrolment API"
+      }
+    ]
+  }
+]
