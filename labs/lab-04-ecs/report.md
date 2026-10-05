@@ -104,6 +104,7 @@ Task role, reusing Lab 01's policy unchanged:
 
 ## 10. Git commit (Step 13)
 
+![alt text](<../../screenshots/lab-04/image copy.png>)
 
 
 ## 11. Verification (Section 9)
