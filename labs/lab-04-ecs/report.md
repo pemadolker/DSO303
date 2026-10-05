@@ -75,7 +75,10 @@ Task role, reusing Lab 01's policy unchanged:
 ![Task definition](../../screenshots/lab-04/step9.png)
 
 **Observed:** `usms-enrolment:1` registered, ACTIVE, awsvpc, FARGATE, 256 CPU / 512 MiB, container `enrolment-api`, and the `grep -c '\$'` check printed 0.
-**Observed, and worth flagging:** in this read-back `Exec` is an empty string and `LogGroup` is `null`, while `Task` shows the task role ARN. The lab expects two different ARNs here. Note that the `grep -c '\$'` check cannot catch an empty variable, since it expands to nothing and leaves no `$` behind. Revision 2 (Exercise 2) set the roles explicitly. 
+
+**Observed, and worth flagging:** revision 1 was registered with an empty `executionRoleArn`. `$EXEC_ROLE_ARN` was empty when I wrote the template, and `templates/lab-04-taskdef.json` still shows `"executionRoleArn": ""`. The `grep -c '\$'` check printed 0 because an empty variable leaves no `$` behind, so it could not catch this. On real AWS the task could not have pulled its image or written logs. Revision 2 sets the role explicitly (`templates/lab-04-taskdef-rev2.json`) and is the revision the service runs.
+
+**Floci limitation:** `logConfiguration` is accepted but not returned. `describe-task-definition` shows `LogGroup: null` on both revisions, although the template contains the correct `awslogs-group`.
 
 
 ## 8. Service (Steps 10 and 11)
@@ -89,7 +92,7 @@ Task role, reusing Lab 01's policy unchanged:
 
 **Observed:** desired 2, running 2, pending 0, FARGATE, both private subnets, security group `usms-enrolment-sg`, `assignPublicIp` DISABLED, and `list-tasks` returned 2. **Floci limitation:** the service `events` list printed `None`, so the service's own narration was not available. The service's `taskDefinition` shows the family name only.
 
-### "Your turn": manual capacity change
+### "Your turn": the manual capacity change
 
 ![Desired count 3 then 2](../../screenshots/lab-04/3then2.png)
 
@@ -118,7 +121,7 @@ Task role, reusing Lab 01's policy unchanged:
 | `usms-enrolment-sg is sourced from usms-app-sg` | Floci does not retain `UserIdGroupPairs` (Section 6). The TCP/80 rule exists. |
 | `no secret is tracked by git` | The check `git ls-files \| grep '^outputs/'` also matches the intentionally tracked `outputs/.gitkeep`. The check is too broad; no secret is tracked. |
 
-I did not delete `.gitkeep` or recreate the security group to force FAIL=0. One caution: on revision 1 the check "exec role and task role are DIFFERENT" passed even though `Exec` printed empty (Section 7), because an empty string differs from any ARN.
+I did not delete `.gitkeep` or recreate the security group to force FAIL=0. One caution: on revision 1 the check "exec role and task role are DIFFERENT" passed because the execution role was genuinely empty in revision 1 (Section 7) and an empty string differs from any ARN.
 
 ## 12. Exercises
 

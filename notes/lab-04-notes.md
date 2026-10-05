@@ -2,44 +2,24 @@
 
 ## Step 3 support path: **Path B - ECS only**
 
-The Step 3 probe (screenshot `step3.png`) showed:
+ECS, CloudWatch and CloudWatch Logs answered the Step 3 probe. All three `application-autoscaling` calls were "not available". (`describe-services` also showed "not available", but only because the probe names a cluster that does not exist.) Every step in Lab 04 is ECS-only and unaffected. Lab 06 will need its documented fallback.
 
-| Area | Result |
-|---|---|
-| `ecs list-clusters`, `register-task-definition` | SUPPORTED |
-| `ecs describe-services` (against a cluster that does not exist) | "not available" |
-| All three `application-autoscaling` calls | not available |
-| CloudWatch (`put-metric-data`, `describe-alarms`) and Logs | SUPPORTED |
+## Floci limitations observed
 
-`describe-services` failed in the probe only because the probe names a cluster called `probe` that does not exist. ECS itself works: `create-cluster`, `register-task-definition`, `create-service` and `describe-services` all succeeded later. The real limitation is that **Application Auto Scaling is absent from this Floci build**. Every step in Lab 04 is ECS-only and unaffected, but this must be carried into Lab 06, which will need its documented fallback.
+1. `containerInsights` was requested but `describe-clusters` returned `Settings: null`. Lab 06's CPU metric would not exist.
+2. The security group rule's source group was not retained (`UserIdGroupPairs` came back empty).
+3. `aws ecs wait services-stable` failed with a JMESPath `None` error, so I checked state manually.
+4. The service `events` list returned `null`.
+5. After `--desired-count 3`, `runningCount` stayed 2 (real Fargate would start a task in 20-60 seconds).
+6. `assume-role` ignored my session name (`floci-session`).
+7. Application Auto Scaling is unavailable.
+8. `logConfiguration` is accepted but not returned: `describe-task-definition` shows `null` for it on both revisions, although the template contains the correct `awslogs-group`.
 
-## Observed results vs limitations (what actually happened)
+## Other findings
 
-**Observed**
-- Cluster `usms-ecs-cluster` ACTIVE; log group `/usms/ecs/enrolment` with 7-day retention.
-- `usms-ecs-exec-role` (with `USMSECSTaskExecution`) and `usms-ecs-task-role` (with Lab 01's `USMSStudentDataReadWrite`) created; exec role trusts `ecs-tasks.amazonaws.com`.
-- `usms-enrolment` task definition registered, Fargate, awsvpc, 256 CPU / 512 MiB (revision 1), later revision 2 at 256 / 1024 MiB.
-- `usms-enrolment-svc`: ACTIVE, FARGATE, two private subnets, `assignPublicIp` DISABLED, desired 2, running 2 (after initially showing running 0).
-- `update-service --desired-count 3` then back to `2` both accepted.
-- `configs/lab-04.env` has 17 exports, no empty values.
-- `verify-lab-04.sh`: PASS=36 FAIL=2.
-
-**Floci limitations (differs from real AWS)**
-1. `containerInsights` was requested on `create-cluster` but `describe-clusters --include SETTINGS` returned `Settings: null`. Real AWS would store it and publish CPU/memory to `AWS/ECS`. Lab 06's target tracking would have no metric to read.
-2. The security group rule created with `UserIdGroupPairs` came back with `FromGroup: null` and `FromCIDR: null`. The rule exists on port 80 but the source-group reference was not retained.
-3. `aws ecs wait services-stable` failed with `In function length(), invalid type for value: None`. I checked the state manually with `describe-services` instead.
-4. The service `events` list returned `null`, so the "service narrates what it did" part of the Step 11 "Your turn" task could not be shown. Real AWS would list each scaling event.
-5. After `update-service --desired-count 3`, `runningCount` stayed 2 in the immediate response. Real Fargate would start a third task over 20-60 seconds.
-6. `assume-role` ignored my session name: the ARN ended in `.../usms-developer-role/floci-session`, not `lab04-ecs-build`. The role assumption itself worked.
-7. Task containers cannot fetch role credentials (documented in the lab); I did not test this.
-8. Application Auto Scaling is unavailable (Path B above).
-
-**Findings I want on record**
-- At Step 2, `verify-lab-02.sh` reported PASS=31 FAIL=2 and `verify-lab-03.sh` PASS=32 FAIL=4 (`image.png`). The lab expects FAIL=0. These come from earlier labs and I did not repair them in this lab. They are already documented, check by check, in my Lab 02 and Lab 03 notes, so I do not repeat them here. They are the same known Floci limitations, unchanged by Lab 04.
-- In the Step 9 verify output for revision 1, `Exec` printed as an empty string and `LogGroup` as `null`, while `Task` showed the task role ARN. The "roles are different" verifier check still passed, because an empty string is not equal to an ARN. So that check cannot tell "different" from "missing". Revision 2 set both roles explicitly. *[Confirm in your own terminal whether revision 2 now shows both ARNs and the log group.]*
-- Final verifier: **PASS=36 FAIL=2**, both documented as benign:
-  1. `usms-enrolment-sg is sourced from usms-app-sg` fails because of limitation 2.
-  2. `no secret is tracked by git` fails because the check `git ls-files | grep '^outputs/'` also matches the intentionally tracked `outputs/.gitkeep`. This is a flaw in the check, not a leaked file.
+- Step 2 verifiers for Labs 02 and 03 did not reach FAIL=0. These are documented in my Lab 02 and Lab 03 notes and are unchanged by this lab.
+- Step 9, revision 1 was registered with an empty `executionRoleArn`: `$EXEC_ROLE_ARN` was empty when I wrote the template, and my own template still shows `"executionRoleArn": ""`. The `grep -c '\$'` check printed 0 and the "roles are DIFFERENT" verifier check passed, because neither can detect an empty value. On real AWS the task could not have pulled its image or opened its log stream. Revision 2 sets the role explicitly and is the revision the service runs. Lesson: check the registered value, not just that the command succeeded.
+- Final verifier: **PASS=36 FAIL=2**, both documented as benign: the missing security group source (limitation 2), and the `outputs/.gitkeep` match in the git check.
 
 ---
 

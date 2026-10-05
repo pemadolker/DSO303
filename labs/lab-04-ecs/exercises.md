@@ -67,11 +67,7 @@ The final inventory showed:
 | `usms-results-svc` | 1 | 1 | `usms-enrolment:2` | SEPARATE | OK |
 
 I also ran the script from my home directory to confirm that it works from a different working directory.
-
-**Screenshot placeholder:**  
-`[Insert screenshot showing inventory script output]`
-
-
+sorry but can you sa
 ![alt text](../../screenshots/lab-04/e3.png)
 
 ![alt text](../../screenshots/lab-04/E3.png)
