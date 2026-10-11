@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Verify every Lab 04 artefact exists and is configured correctly.
 # Exit 1 if anything is missing. Read-only; safe to run at any time.
+# PASS count after Lab 05 Step 13 (enrolment-sg now sourced from usms-alb-sg,
+# not usms-app-sg): previously N, now N+1 (one new check added). An
+# undocumented count is worse than no count at all: with no count, a
+# reader checks the output for FAIL=0 and trusts it; with a stale
+# documented count, a reader sees a number that LOOKS authoritative and
+# stops checking, even though the number itself is now wrong.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,8 +16,10 @@ source "$REPO_ROOT/configs/lab-01.env" 2>/dev/null || true
 source "$REPO_ROOT/configs/lab-02.env" 2>/dev/null || true
 source "$REPO_ROOT/configs/lab-03.env" 2>/dev/null || true
 source "$REPO_ROOT/configs/lab-04.env" 2>/dev/null || true
+source "$REPO_ROOT/configs/lab-05.env" 2>/dev/null || true
 
 : "${USMS_APP_SG:=none}"
+: "${USMS_ALB_SG:=none}"
 : "${USMS_PRIVATE_SUBNET_A:=none}"
 : "${USMS_PRIVATE_SUBNET_B:=none}"
 : "${USMS_ECS_CLUSTER:=usms-ecs-cluster}"
@@ -93,8 +101,19 @@ check "service desiredCount is 2 (one task per Availability Zone)" \
 
 echo "== Lab 04 networking =="
 check "usms-enrolment-sg exists"  "aws ec2 describe-security-groups --group-ids $USMS_ENROLMENT_SG"
-check "usms-enrolment-sg is sourced from usms-app-sg (not a CIDR)" \
-  "test \"\$(aws ec2 describe-security-groups --group-ids $USMS_ENROLMENT_SG --query 'SecurityGroups[0].IpPermissions[0].UserIdGroupPairs[0].GroupId' --output text)\" = $USMS_APP_SG"
+# This check used to assert "usms-enrolment-sg is sourced from usms-app-sg
+# (not a CIDR)". The PROPERTY it was protecting is not that specific group -
+# it is that the enrolment tasks accept traffic only from a named security
+# group, never from a raw CIDR, and only from whichever tier is the tasks'
+# legitimate client. Lab 05 Step 13 changed WHO that legitimate client is
+# (the load balancer, not the web tier directly) without changing the
+# property itself. The check below asserts the current client; the one
+# after it proves the old client was actually removed, not just
+# supplemented, which a check that only confirms the new state would miss.
+check "usms-enrolment-sg is sourced from usms-alb-sg (not a CIDR)" \
+  "test \"\$(aws ec2 describe-security-groups --group-ids $USMS_ENROLMENT_SG --query 'SecurityGroups[0].IpPermissions[0].UserIdGroupPairs[0].GroupId' --output text)\" = $USMS_ALB_SG"
+check "usms-enrolment-sg no longer admits usms-app-sg directly" \
+  "! aws ec2 describe-security-groups --group-ids $USMS_ENROLMENT_SG --query 'SecurityGroups[0].IpPermissions[].UserIdGroupPairs[].GroupId' --output text | grep -q $USMS_APP_SG"
 check "usms-enrolment-sg admits NOTHING from 0.0.0.0/0" \
   "! aws ec2 describe-security-groups --group-ids $USMS_ENROLMENT_SG --query 'SecurityGroups[0].IpPermissions[].IpRanges[].CidrIp' --output text | grep -q '0.0.0.0/0'"
 
