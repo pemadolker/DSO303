@@ -205,7 +205,6 @@ and genuinely stored" results in this lab, worth noting for balance against
 the several "accepted but not returned" findings elsewhere (Steps 10, 14).
 
 
-cat >> notes/lab-05-notes.md << 'EOF'
 
 ## Correction to Step 17 block 3 - not a filter bug, instance was stopped
 The earlier "carrier: None" result was NOT a Floci filter limitation as I
@@ -387,3 +386,10 @@ scaling policy could either over-provision (many cheap requests triggering
 a scale-out that isn't needed) or under-provision (a surge of expensive
 requests that looks numerically small but saturates the service) - the same
 failure mode CPU has, just inverted.
+
+## Update: Floci 1.5.34 -> 2.2.0 (15 Oct 2026)
+- Upgraded because Lab 06 needs Application Auto Scaling (not in 1.5.34).
+- Fixed on 2.2.0: healthCheckGracePeriodSeconds now reads back (60); deployments no longer null; USMS_SVC_GRACE_PERIOD=60.
+- Still broken: UserIdGroupPairs empty on security-group rules (use describe-security-group-rules for counts).
+- verify-lab-05: PASS=45 FAIL=4 -> PASS=48 FAIL=1 (SG source check only).
+- Not yet re-tested on 2.2.0: revoke-security-group-ingress, force-new-deployment, rule Values read-back, update-service --load-balancers.
