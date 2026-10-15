@@ -4,6 +4,8 @@
 
 ## Exercise 1 - Basic: a second path through the same load balancer
 
+![Exercise 1](../../screenshots/lab5/e1.png)
+
 Created `usms-results-tg` (target-type ip, HTTP/80, health check path `/`,
 matcher `200-399`, deregistration delay 15s) and a listener rule at priority
 20 matching `/results` and `/results/*`, forwarding to it. Tagged
@@ -35,6 +37,8 @@ answered badly) - `503` means a destination existed in principle but no live
 target could serve it.
 
 ## Exercise 2 - Intermediate: repair the verification script you broke
+
+![Exercise 2](../../screenshots/lab5/e2.png)
 
 The original check asserted one specific expression of a general property:
 that the enrolment tasks accept traffic only from a named security group,
@@ -68,6 +72,8 @@ not the line diff.
 
 ## Exercise 3 - Problem solving: a load balancer report tool
 
+![Exercise 3](../../screenshots/lab5/e3.png)
+
 Built `scripts/utilities/usms-lb-report.sh`. Discovers every ALB named
 `usms-*` with no hard-coded ARNs; walks listeners, then rules, then target
 health, three levels of `describe-*` calls deep. Rules are sorted into
@@ -88,6 +94,8 @@ finding that `force-new-deployment` is a no-op here. Verified identical
 output running from `~` and from `labs/lab-05-ecs-alb/`.
 
 ## Exercise 4 - Challenge: the exposure review
+
+![Exercise 4](../../screenshots/lab5/e4.png)
 
 **What changed.** The network path to the enrolment API went from
 `usms-web-01 -> usms-enrolment-sg` directly, to `usms-web-01 -> usms-enrolment-alb
@@ -118,7 +126,7 @@ editing one flag.
 |---|---|---|
 | What can reach the load balancer | n/a - no load balancer existed | Anything on the internet, tcp/80 |
 | What can reach the tasks | `usms-app-sg` (i.e. `usms-web-01`) only | `usms-alb-sg` only |
-| What can reach the tasks directly | `usms-web-01`, by address, directly | Nothing - the direct rule was removed in Step 13 |
+| What can reach the tasks directly | `usms-web-01`, by address, directly | Intended: nothing (the old rule is revoked in Step 13). **Observed on 1.5.34:** the revoke printed `True` but the rule stayed, so the old path was still open - see Step 13 in the README |
 
 **Monthly cost estimate** (US East, N. Virginia pricing). An ALB is billed at
 $0.0225/hour flat, plus $0.008 per LCU-hour, billed on whichever of four
@@ -154,6 +162,8 @@ confirmed gone via `describe-rules`.
 
 ## Exercise 5 - Integration: the ResourceLabel hand-off to Lab 06
 
+![Exercise 5](../../screenshots/lab5/e5.png)
+
 Built `scripts/utilities/usms-resource-label.sh`, deriving the ResourceLabel
 string purely from the API (never a hard-coded identifier): the load
 balancer's ARN suffix is isolated with `${LB_ARN##*:loadbalancer/}` (strip up
@@ -171,6 +181,5 @@ ARNs, the scalable resource ID, the scaling dimension, current desired
 count, and a timed `force-new-deployment` measurement. That measurement
 (~1.6 seconds) is not meaningful on this build: per Step 14's finding,
 `force-new-deployment` is a confirmed no-op here, so the timer measured API
-acknowledgment latency, not a real task replacement. Recorded AWS's
-documented Fargate startup figure instead for Lab 06's cooldown sizing to
-reference.
+acknowledgment latency, not a real task replacement. I did not record a Fargate startup figure in the file; for Lab 06's cooldown sizing use the
+measured startup from Lab 06's own scale-out, not a documented number.
