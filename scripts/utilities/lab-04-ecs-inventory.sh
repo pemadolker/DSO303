@@ -62,7 +62,11 @@ for SERVICE_ARN in $SERVICE_ARNS; do
     TASK_ROLE=$(printf '%s' "$TASKDEF_JSON" |
       jq -r '.taskRoleArn // ""')
 
-    if [ "$EXEC_ROLE" = "$TASK_ROLE" ]; then
+    # An empty role is its own verdict: comparing "" with an ARN would report
+    # SEPARATE, which is how revision 1's empty executionRoleArn slipped through.
+    if [ -z "$EXEC_ROLE" ] || [ -z "$TASK_ROLE" ]; then
+        ROLES="MISSING"
+    elif [ "$EXEC_ROLE" = "$TASK_ROLE" ]; then
         ROLES="SAME"
     else
         ROLES="SEPARATE"

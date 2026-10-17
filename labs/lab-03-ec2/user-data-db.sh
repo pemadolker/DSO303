@@ -1,6 +1,10 @@
 #!/bin/bash
 # USMS data tier bootstrap. Runs once at first boot via cloud-init.
 # Idempotent: refuses to run twice by checking for a marker file.
+# set -e matters here: the marker is the LAST line, so if any step fails the
+# script stops before writing it, and a re-run retries instead of skipping a
+# half-finished install.
+set -euo pipefail
 MARKER=/var/log/usms-db-bootstrap.done
 [ -f "$MARKER" ] && { echo "already bootstrapped, exiting"; exit 0; }
 
@@ -12,9 +16,9 @@ postgresql-setup --initdb
 systemctl enable --now postgresql
 sudo -u postgres psql -c "CREATE DATABASE usms;"
 
-TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+TOKEN=$(curl -sfX PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
-IID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+IID=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/instance-id)
 
 echo "$IID $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"

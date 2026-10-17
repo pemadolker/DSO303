@@ -2,10 +2,16 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadSourceBucketObjects",
+      "Sid": "ListAndReadSourceBucket",
       "Effect": "Allow",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::usms-student-data/*",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::usms-student-data",
+        "arn:aws:s3:::usms-student-data/*"
+      ],
       "Condition": {
         "StringEquals": { "aws:RequestedRegion": "us-east-1" }
       }
@@ -14,11 +20,15 @@
       "Sid": "WriteAndVerifyArchiveBucket",
       "Effect": "Allow",
       "Action": [
+        "s3:ListBucket",
         "s3:PutObject",
         "s3:GetObject",
         "s3:GetObjectAttributes"
       ],
-      "Resource": "arn:aws:s3:::usms-archive/*",
+      "Resource": [
+        "arn:aws:s3:::usms-archive",
+        "arn:aws:s3:::usms-archive/*"
+      ],
       "Condition": {
         "StringEquals": { "aws:RequestedRegion": "us-east-1" }
       }
@@ -39,9 +49,15 @@
     {
       "Sid": "DenyDeleteAnywhere",
       "Effect": "Deny",
-      "Action": "s3:DeleteObject",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:DeleteBucket"
+      ],
       "Resource": [
+        "arn:aws:s3:::usms-student-data",
         "arn:aws:s3:::usms-student-data/*",
+        "arn:aws:s3:::usms-archive",
         "arn:aws:s3:::usms-archive/*"
       ]
     }
