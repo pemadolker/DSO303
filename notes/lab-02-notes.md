@@ -14,27 +14,26 @@ associate that route table with the subnet.
 
 #### 2. Security groups are stateful and network ACLs are stateless. Describe a specific USMS request path name the ports and the direction of each leg where that difference changes how many rules you must write. Then say which of the two you would reach for first when a new requirement arrives, and why.
 
-The clearest example from our own build is app tier -> db tier -> back.
-Consider the case of a student sending a request to the USMS web server using HTTPS. The request is received on TCP port 443 and an inbound rule in the application security group allows HTTPS traffic. The response sent back to the student will, however, be automatically permitted by the security group.
-This is due to the fact that security groups are stateful. 
+The clearest example in our build is the app tier talking to the database: `usms-web-01` in `usms-public-subnet-a` (10.0.1.0/24) opens a connection to `usms-db-01` in `usms-private-subnet-a` (10.0.3.0/24) on TCP 5432.
 
-The situation is different with the network ACL because it is stateless; both the incoming traffic on TCP port 443 and the outbound response have to be allowed separately.
-The NACL must also take care of the relevant ephemeral ports for the outgoing TCP 443 traffic.
+- **Leg 1, the request:** 10.0.1.x, random ephemeral port (say 50123) → 10.0.3.x, port 5432.
+- **Leg 2, the reply:** 10.0.3.x, port 5432 → 10.0.1.x, port 50123.
 
-For a new requirement coming in, I'd reach for security groups first, basically always.
-They're stateful (less rules), they can reference each other by group ID which is way more
-maintainable than hardcoding CIDR ranges, and they're the more powerful/flexible layer. I'd
-only touch NACLs when I require traffic control at the subnet level or an extra measure of security in the network .
+With the **security group** I write one rule: `usms-db-sg` allows inbound 5432 from `usms-app-sg`. The reply in leg 2 is allowed automatically, because a security group is stateful and remembers that it let the request in.
+
+With the **NACL** on the private subnet I need two rules, because a NACL is stateless and judges every packet on its own: inbound 5432 from 10.0.1.0/24 for leg 1, and outbound 1024-65535 to 10.0.1.0/24 for leg 2. If I forget the second one, the database receives the query but its answer is dropped on the way out, and the connection just hangs. (In our `usms-private-nacl` these are inbound rule 100 and outbound rule 100, written for the whole VPC range, 10.0.0.0/16.)
+
+(The public subnet uses the default NACL, which allows everything, so a student → web server example would not show the difference in our VPC.)
+
+For a new requirement I would reach for security groups first. They need fewer rules, they can name another group instead of an address range (so they keep working when instances move or scale), and they are attached to exactly the resource being protected. I would only touch the NACL for a subnet-wide rule, such as blocking a known bad address range for everything in the subnet, or as a second safety layer.
 
 #### 3. usms-db-sg allows PostgreSQL from usms-app-sg rather than from 10.0.1.0/24. Give two concrete changes to the USMS architecture that would silently break the CIDR-based version while leaving the group-referenced version correct.
 
-Two changes that would quietly break the CIDR version but leave the group-referenced one
-fine:
+**1. The web tier is spread across two Availability Zones.** For high availability we add web servers in `usms-public-subnet-b`, which is 10.0.2.0/24. They are in `usms-app-sg` like the others, so the group-based rule lets them reach the database straight away. A CIDR rule for 10.0.1.0/24 would refuse them, and it would be silent: there is no error message saying "wrong security group", the database connection simply times out, and the problem only shows up when traffic lands on the new servers.
 
-Firstly, if the web tier is rebuilt in another subnet or if a new subnet in a different CIDR range is introduced (like we did in our public subnet b example), a CIDR policy (ex. 10.0.1.0/24 policy) will stop working silently as soon as new web servers come into play without the defined CIDR range. The group-referenced policy is independent of whatever subnet or CIDR these app tier instances happen to be - as long as they are included in usms-app-sg.
+**2. The web tier moves behind a load balancer into the private subnets.** Lab 05 did exactly this for the enrolment service. If the web servers were moved out of the public subnet into 10.0.3.0/24 and 10.0.4.0/24, with only the load balancer left in public, every one of them would have a new address outside 10.0.1.0/24. They are still in `usms-app-sg`, so the group rule still works, while the CIDR rule would block the whole tier from its own database.
 
-Secondly, if USMS sets up an autoscaling group for the web tier and different private IPs start being assigned to web tier instances over the course of time, a CIDR policy still works as long as instances do not change subnets. However, if at some point a second subnet is added to the web tier (e.g. introducing HA in which multiple subnets are deployed, as we did in the example public subnet-b), the CIDR policy will not be applied. One would need to remember updating the security group every time the topology changes. Group reference always works since membership in usms-app-sg matters, while the location of instances does not matter.
-
+The general point: a CIDR rule describes *where* the client happens to be today, while a group rule describes *what* the client is. Architectures change where things live far more often than what they are. (A CIDR rule can also be too *wide*: anything else placed in 10.0.1.0/24 later, like a bastion or a test box, would get database access without anyone deciding it should.)
 
 #### 4. The NAT gateway sits in usms-public-subnet-a but exists to serve usms-private-subnet-a. Explain why it must be in the public subnet. Then explain what would happen to the private subnet in AZ b if AZ a became unavailable, and what that implies about where the availability boundary really sits.
 
@@ -47,11 +46,17 @@ This example proves that the boundary of the availability zone is not limited by
 
 #### 5. This lab created a gateway endpoint for S3. Describe the path a request from a private instance to usms-student-data takes with the endpoint, and the path it would take without one. Identify which path leaves the AWS network and what that costs in money and in exposure.
 
-Using an S3 gateway endpoint allows a request made by an instance in the private subnet to follow the procedures set by the VPC endpoint when sent to usms-student-data. The route is found without any other steps as the request goes directly to S3 via the internal AWS network. As a result, there is no need for the data to go through any networks such as the NAT gateway or the Internet Gateway.
+**With the endpoint:** the private instance asks for `usms-student-data`. Its route table, `usms-private-rt`, has a route for the S3 prefix list (`pl-xxxx`) that points at the gateway endpoint, and that route is more specific than `0.0.0.0/0`, so it wins. The request goes straight to S3 over the AWS network, never touching the NAT gateway or the internet gateway.
 
-Without the endpoint, the request from the private instance would have followed the route specified by 0.0.0.0/0 as it appears in the private route table. This would have sent the packet to the NAT gateway, thereby incurring costs due to the NAT gateway data-processing.
+**Without the endpoint:** the only matching route is `0.0.0.0/0 → usms-nat`. The request goes to the NAT gateway in the public subnet, which swaps the private address for its public Elastic IP and sends it out through `usms-igw` to S3's public endpoint. This is the path that leaves the private network and uses public addressing.
 
-Moreover, the endpoint can help avoid exposing the service to extra risks, because the endpoint does not require the service to use any internet routable path for accessing S3. However, in our lab, Floci had one limitation; even though the endpoint was correctly created and appeared to be in the 'available' state, Floci did not inject the expected pl-xxxx route into the route table. Thus, we were able to confirm that the endpoint object existed but we could not prove its routing capabilities.
+**Money:** the NAT gateway charges $0.045 for every GB it processes, on top of its hourly charge. If the web tier uploads 100 GB of transcripts a month, that is $4.50 a month for nothing. A gateway endpoint for S3 has no charge at all (and if the instance and the NAT are in different AZs, there is cross-AZ data transfer on top).
+
+**Exposure:** through the NAT, S3 traffic shares the same path as all other internet-bound traffic, and S3 sees requests coming from a public IP. With the endpoint, the traffic stays private, and it can also be locked down further: an endpoint policy can limit which buckets are reachable through it, and the bucket policy can require `aws:SourceVpce`, so the bucket only accepts requests that came through our endpoint.
+
+On Floci the endpoint was created and reported `available`, but no `pl-xxxx` route appeared in the route table, so I could confirm the object exists but not prove the routing. The description above is how it works on real AWS.
+
+Source for prices: [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/).
 
 #### 6. Step 23 restarted Floci and looked the VPC up by tag rather than reusing the VPC_ID shell variable. Explain what specifically would not have been proven had the variable been reused. Relate your answer to the failure described in Lab 1 Step 14.
 

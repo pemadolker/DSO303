@@ -195,9 +195,11 @@ the whole idea behind the exercise. `${BASH_SOURCE[0]}` giving me the repo root 
 - Should never be rendered reachable from the public internet
 - Requires outbound access for security updates
 
-### Placement of subnet 
+### Placement of subnet
 
-The service will be placed in the existing net **`usms-private-subnet-a`** (or `-b` for HA) and will require no new subnet. There is no public IPv4 address required, since campus traffic that comes in through VPN will not be counted as "internet" for the purpose of routing in the private subnet. The existing configuration (no route to a public internet gateway and outbound NAT routing for updates) will meet all the requirements described above.
+The service goes in the existing **`usms-private-subnet-a`** (and `-b` as well if it ever runs as two copies). No new subnet is needed. A private subnet already gives the two properties the brief asks for: it has no route to the internet gateway, so nothing on the internet can reach it, and its `0.0.0.0/0` route goes through `usms-nat`, so it can still download security patches.
+
+One thing the subnet does **not** have yet is a way back to campus. Campus traffic arrives over the VPN, so `usms-private-rt` needs a route for `10.10.0.0/16` pointing at the VPN side (a virtual private gateway, or a transit gateway if the university already uses one). Without that route, replies to `10.10.x.x` would try to leave through the NAT gateway and never reach campus.
 
 ### Security Groups
 
@@ -213,16 +215,40 @@ I originally added a port 5432 rule to `usms-exam-sg`, thinking that I need to o
 
 ### NACL
 
-There is no change required. Usms-private-nacl already provides the permission to allow 5432 as inbound from the range of 10.0.0.0/16, permission for ephemeral port returns, and 443 as the outgoing port for patches. Since the exam service is on the same private subnet as the DB tier, all of this is automatically applicable.  
+A NACL change **is** required. I first wrote that none was needed, but reading my own `usms-private-nacl` rules again shows they would block this service:
+
+- inbound only allows TCP 5432 from `10.0.0.0/16` and ephemeral ports (1024-65535), so HTTPS on 443 from `10.10.0.0/16` hits the implicit deny;
+- outbound only allows ephemeral ports to `10.0.0.0/16` and 443 to anywhere, so the replies to campus (going back to the user's ephemeral port) would be dropped too, because the NACL is stateless.
+
+Two rules fix it, one in each direction:
+
+| Rule | Direction | Allow | Source / destination | Why |
+|---|---|---|---|---|
+| 120 | inbound | TCP 443 | `10.10.0.0/16` | campus staff reach the exam service over HTTPS |
+| 120 | outbound | TCP 1024-65535 | `10.10.0.0/16` | the replies back to campus; the NACL does not remember the request |
+
+The database rules do not need to change: the exam service is inside `10.0.0.0/16`, so its connections to 5432 are already allowed in, and the replies already go out on the existing ephemeral rule.
 
 ### NAT Gateway - One vs. Two
 
-A NAT gateway costs around $0.045 per hour, plus a per-GB data fee. The above number is simply an illustrative figure that was calculated using AWS's on-demand pricing model; actual AWS price needs to be checked as it varies by region and fluctuates with time. Based on this rough calculation, the cost of using an NAT gateway becomes around $32/month purely in terms of hourly charges. As is being discussed in the lab document, this component of the system is often one of the major cost items when using a small VPC.  
+Prices for `us-east-1`, using 730 hours per month:
 
-Presently, we have only one NAT gateway located in AZ a; hence, it is clear that if AZ a were to fail, then usms-private-subnet-b (which I had implemented in exercise 5 in AZ b) would have to experience total internet loss even if all the components of it is completely fine. 
+| Item | Rate | Per month |
+|---|---|---|
+| NAT gateway, hourly charge | $0.045 / hour | $32.85 |
+| NAT data processing | $0.045 / GB | depends on traffic |
+| Public IPv4 address on the NAT's Elastic IP | $0.005 / hour | $3.65 |
+| **One NAT gateway** (before data) | | **$36.50** |
+| **Two NAT gateways** (before data) | | **$73.00** |
+| Site-to-Site VPN connection to campus (needed either way) | $0.05 / hour | $36.50 |
 
+So the second NAT gateway costs about **$36.50 more per month, roughly $438 a year**, plus its share of data processing.
 
-I don't think that there is one answer when it comes to exam results systems. The time student characterize exam periods as short and as points of pivotal importance. One thing that could be suggested is to devote the attention to the necessity of having an additional NAT gateway during those timeframes, just to be safe. However, once the exams are over, it might be a bit too costly to have back-up solutions in the system that you don't plan to use. In fact, I would recommend getting a NAT gateway only for the period of the exams instead of just including it in your plan as a required feature.
+What that money buys: today the only NAT gateway sits in AZ a. If AZ a goes down, `usms-private-subnet-b` loses its way out to the internet even though everything in AZ b is healthy. The exam service would keep answering campus requests (that traffic comes over the VPN, not through the NAT), but it could not download patches until AZ a came back.
+
+My recommendation is **one NAT gateway for now**. For this service, losing the NAT only delays patching; it doesn't take the service offline, and an AZ outage usually lasts hours, not weeks. I would add the second NAT gateway (with its own private route table for AZ b) when either of these becomes true: the exam service runs in both AZs and starts needing outbound calls to stay up, for example to an external API; or the university decides results publishing week cannot tolerate any degraded component. At that point $36.50 a month is small next to an exam-results outage.
+
+Sources: [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) (NAT gateway rates and the public IPv4 charge; the page's worked example uses the same $0.045 rates), [AWS Site-to-Site VPN pricing](https://aws.amazon.com/vpn/pricing/).
 
 ### What to delete
 
@@ -273,6 +299,16 @@ re-check. Final state, confirmed:
 ![Exercise 4 — exam-results SG creation, both rules, and the stuck 5432 mistake confirmed](../../screenshots/lab2/exercise4.png)
 
 The use of the 5432 rule does not have any real impact on the security posture here despite the fact that it exists — it has not been assigned a CIDR nor any Source group (meaning that the same storage bug exists everywhere) and therefore does not enable any access to something identifiable - but its presence also does not represent an empty state that I wanted, and I would like to be clear about that instead of pretending it does not exist.
+
+`usms-db-sg` also gets its new rule, so the exam service can read the transcripts database:
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id "$USMS_DB_SG" \
+  --ip-permissions '[{"IpProtocol":"tcp","FromPort":5432,"ToPort":5432,"UserIdGroupPairs":[{"GroupId":"'"$EXAM_SG_ID"'","Description":"PostgreSQL from the exam-results service"}]}]' \
+  --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text
+# <<paste the sgr- ID it prints>>
+```
 
 ## Exercise 5 - Integration: second Availability Zone for the private tier
 
