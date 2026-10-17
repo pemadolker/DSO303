@@ -92,40 +92,118 @@ actually got exercised.
 
 ## Exercise 4 - Challenge: right-size and clean up
 
-Given the project lead's numbers (400 concurrent users, mostly reads, one
-`t3.micro` at 85% CPU at midday and idle overnight), I'd scale **out**
-rather than up: two small instances across two Availability Zones behind
-a load balancer. A single bigger instance is still one point of failure
-and still costs the larger hourly rate all night even while idle; scaling
-out is also what Lab 06's Auto Scaling group is actually built to do —
-add and remove capacity as load changes, rather than paying for a fixed
-larger size around the clock.
+### What the numbers say
 
-On the CPU-credit question: a `t3.micro` has a modest sustained baseline
-(around 10% per vCPU, so roughly 20% combined across its two vCPUs) and
-earns credits while running under that baseline, spending them whenever
-it runs above it. Sitting at 85% all midday spends credits much faster
-than they're earned, so they eventually run out — at which point a
-`standard`-mode instance gets throttled back down to its baseline, while
-an `unlimited`-mode instance keeps running at full speed and gets billed
-for the extra. Which of those happens is controlled by the instance's
-credit specification, not anything automatic — checked with
-`describe-instance-credit-specifications`.
+The portal has 400 concurrent users, mostly reading, and the single `t3.micro` sits at 85% CPU at midday and is idle overnight. Two facts about the t3 family change how to read that.
 
-Nothing actually needed deleting: the admin host and `usms-db-02` from
-Exercises 1 and 2 never left the `terminated` state, and a terminated
-instance can't be removed from the account, it just eventually stops
-showing up in most lookups. `usms-web-data-vol` only *looks* orphaned
-because `attach-volume` doesn't work on this build, and `usms-nat-eip`
-belongs to Lab 02, so I left both alone. The only actual cleanup was two
-leftover Docker containers behind the two failed launches, which never
-started and had nothing depending on them — removed after writing the
-same danger note this lab uses throughout (what's deleted, what depends
-on it, reversibility, effect on later labs). `verify-lab-03.sh` still
-reported the same `PASS=32 FAIL=4` afterward, confirming the cleanup
-didn't touch anything the earlier core build needed.
+**1. Every t3 size from micro to medium has the same 2 vCPUs.** A `t3.micro`, `t3.small` and `t3.medium` differ in memory (1, 2 and 4 GiB) and in their CPU *baseline*, not in the number of processors. If the app needs 1.7 vCPU at midday, it still needs 1.7 vCPU on a `t3.medium`, so the CPU graph would still read about 85%. "Scaling up" inside the t3 family buys memory and burst allowance, not more processing power.
+
+**2. 85% sustained is a specific problem for a burstable instance.** A `t3.micro` is only guaranteed a baseline of 10% per vCPU. It earns 12 CPU credits an hour (one credit is one vCPU running flat out for one minute) and spends them whenever it runs above baseline. At 85% it uses about 1.7 vCPU against a baseline of 0.2 vCPU, so it spends credits much faster than it earns them. What happens then depends on the credit specification:
+
+- **standard** mode: when the credits run out, the instance is throttled down to its 10% baseline, so the portal suddenly becomes very slow at lunchtime;
+- **unlimited** mode: it keeps running at full speed and AWS bills the extra at **$0.05 per vCPU-hour**.
+
+t3 instances launch in **unlimited** mode by default, and we never changed it, so we should be paying, not throttling. I checked:
+
+```bash
+aws ec2 describe-instance-credit-specifications --instance-ids "$USMS_WEB_INSTANCE" --output table
+```
+
+<<paste the output; on real AWS it should show CpuCredits = unlimited>>
+
+That is probably part of why finance thinks the EC2 line is too high: the bill is not just the $7.59 instance, it includes surplus credits every busy day.
+
+### Scale up or scale out?
+
+I assumed the busy period lasts about **4 hours a day at 85%**, and the other 20 hours average about **5%**. (We don't have the real graph, so these are stated assumptions; with CloudWatch data, I would use the real `CPUUtilization` average.)
+
+- **Scale up** (one bigger instance): simple, no code or network changes. But as shown above, inside t3 it doesn't add CPU, it only removes the surplus charge, because a `t3.medium` has a higher baseline (20%). It is still one machine, so one failure takes the whole portal down, and we pay the bigger price all night while it is idle.
+- **Scale out** (two smaller instances behind a load balancer): each instance carries half the load, about 42.5% at peak, so the user-facing slowness goes away. It survives one instance or one Availability Zone failing. With an Auto Scaling group (Lab 06's idea), it can shrink to one instance overnight, which is the only option that actually saves money when the portal is idle. The cost is a load balancer, and the app must not keep session state on one server.
+
+### Monthly cost comparison
+
+Linux on-demand, `us-east-1`, 730 hours a month:
+
+| Option | How it is calculated | Per month |
+|---|---|---|
+| **A. Today:** 1 × t3.micro, unlimited | $0.0104 × 730 = $7.59, plus surplus: 24-hour average CPU ≈ (4 h × 85% + 20 h × 5%) / 24 ≈ 18.3%, which is 8.3 points over the 10% baseline; 8.3% × 2 vCPU × 24 h ≈ 4.0 vCPU-h a day × $0.05 ≈ $0.20/day ≈ $6.08 | **≈ $13.67** |
+| **B. Scale up:** 1 × t3.medium | $0.0416 × 730; 24-hour average stays under its 20% baseline, so no surplus charge | **$30.37** |
+| **C. Scale out:** 2 × t3.small behind an ALB, 1 instance overnight | instances: (12 h × 2 + 12 h × 1) × $0.0208 × 30.4 days ≈ $22.76; ALB: $0.0225 × 730 = $16.43; ALB public IPv4: 2 × $0.005 × 730 = $7.30; LCUs at this traffic are small | **≈ $46.50** + a few dollars of LCU |
+
+My recommendation is **C**, even though it costs the most. Option A is the cheapest on paper, but users get a slow portal every midday and one failure takes everything down. Option B costs more than A and fixes neither problem. Option C is the only one that adds real CPU at peak, survives a failure, and scales down at night. If finance only wants a cheaper bill and the slowness is acceptable, the honest answer is that the micro is not overpriced; it is undersized.
+
+Sources: [EC2 T3 instances](https://aws.amazon.com/ec2/instance-types/t3/) (vCPUs, credits per hour, baselines, unlimited by default, $0.05 per vCPU-hour); [Unlimited mode concepts](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-unlimited-mode-concepts.html); [EC2 on-demand pricing](https://aws.amazon.com/ec2/pricing/on-demand/) (t3.micro $0.0104, t3.small $0.0208, t3.medium $0.0416 per hour); [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/); [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) (public IPv4).
 
 ![describe-instance-credit-specifications, and verify-lab-03.sh unchanged after cleanup](../../screenshots/lab3/e4.png)
+
+### What I would delete today
+
+First I listed every candidate, so nothing is deleted by guesswork:
+
+```bash
+aws ec2 describe-instances --filters Name=tag:Ephemeral,Values=true \
+  --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`]|[0].Value,State.Name]' --output table
+aws ec2 describe-volumes --filters Name=status,Values=available \
+  --query 'Volumes[].[VolumeId,Tags[?Key==`Name`]|[0].Value]' --output table
+aws ec2 describe-addresses \
+  --query 'Addresses[?AssociationId==null].[AllocationId,PublicIp,Tags[?Key==`Name`]|[0].Value]' --output table
+```
+
+<<paste the three tables>>
+
+What the inventory showed and what I decided:
+
+- `usms-web-data-vol` shows as available (unattached) only because `attach-volume` is unsupported on this build. It is in the KEEP column, so I left it alone.
+- `usms-nat-eip` belongs to Lab 02's NAT gateway, so I left it alone too.
+- The admin host and `usms-db-02` from Exercises 1 and 2 were already `terminated`, because Floci could not start their containers.
+
+Dependency order: instances first (they hold volumes and addresses), then volumes, then addresses.
+
+**1. The Exercise 1 admin host**
+
+```
+What is deleted:     usms-admin-01-host, a practice instance with no data
+What depends on it:  nothing; it is not in configs/lab-03.env
+Reversible?          no, a terminated instance cannot be restarted (it can be relaunched from the same command)
+Effect on later labs: none
+```
+
+```bash
+ADMIN_ID=$(aws ec2 describe-instances --filters Name=tag:Tier,Values=admin \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+aws ec2 terminate-instances --instance-ids "$ADMIN_ID"   # already terminated on Floci; safe to re-run
+```
+
+**2. The Exercise 2 instance `usms-db-02`**
+
+```
+What is deleted:     usms-db-02, a practice data-tier instance
+What depends on it:  nothing; it never reached running
+Reversible?          no (relaunch with user-data-db.sh if needed)
+Effect on later labs: none; Lab 06 replaces the data tier with RDS anyway
+```
+
+```bash
+DB2_ID=$(aws ec2 describe-instances --filters Name=tag:Name,Values=usms-db-02 \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+aws ec2 terminate-instances --instance-ids "$DB2_ID"
+```
+
+**3. The two dead Docker containers behind those launches** (Floci-specific; real EC2 has nothing like this)
+
+```
+What is deleted:     two stopped containers Floci created for the failed launches
+What depends on it:  nothing; they never started
+Reversible?          not needed, they held no state
+Effect on later labs: none; usms-web-01 and usms-db-01 have their own containers
+```
+
+```bash
+docker ps -a --filter status=created --filter status=exited
+docker rm <<container names from the line above>>
+```
+
+`./scripts/utilities/verify-lab-03.sh` reported the same result before and after the cleanup, so nothing the core build needed was touched.
 
 ## Exercise 5 - Integration: prepare the S3 hand-off for Lab 4
 

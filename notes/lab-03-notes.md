@@ -77,6 +77,12 @@ followed by the seven review questions.
 
   ![Docker logs: Bind for 0.0.0.0:2200/2201 failed, port already allocated](../screenshots/lab3/dk.png)
 
+- **Instances come back stopped after a Floci restart.** After upgrading
+  Floci to 2.2.0 and restarting it, `usms-web-01` was `stopped`, which made
+  "usms-web-01 is running" fail in `verify-lab-03.sh`. `start-instances` fixed
+  it. Real EC2 instances keep running regardless of anything on my laptop; this
+  is Floci restarting its instance containers in the stopped state.
+
 - **Not observable at all, reasoning only:** nginx actually running, the
   user-data script executing, the instance fetching credentials from the
   metadata service, and a security group actually blocking a connection.
@@ -107,17 +113,15 @@ round-tripped, see above):
 ## Review questions
 
 **1. Step 8: what if each of the five inputs had been wrong or missing?**
-A wrong subnet or security group fails immediately —
-`InvalidSubnetID.NotFound` / `InvalidGroup.NotFound`. A missing instance
-profile or key pair also fails immediately, for the same reason: the API
-checks that the named object exists before it will launch anything. The
-quiet one is the user-data script — if it has a bug, `run-instances`
-still succeeds, and the failure only shows up later when nginx isn't
-running, because it failed at boot and by then you may not even be able
-to log in to check why. A wrong security group *rule* (not a missing
-group, but a rule that's scoped incorrectly) fails quietly in a different
-way: the instance launches fine, you just can't reach it, and nothing
-tells you that's the reason.
+Each of the five can fail in two ways, missing (doesn't exist) or wrong (exists, but is the wrong one), and they behave very differently.
+
+- **Subnet (Lab 02).** Missing: immediate, `InvalidSubnetID.NotFound`. Wrong: silent. If I had passed `usms-private-subnet-a` by mistake, the web server would launch fine but get no public address and have no route to the internet gateway, so nobody could reach it, and nothing would say why.
+- **Security group (Lab 02).** Missing: immediate, `InvalidGroup.NotFound`. Wrong: silent. With `usms-db-sg` instead of `usms-app-sg`, the instance runs but port 80 is closed, so requests just time out.
+- **Instance profile (Lab 01).** Missing: immediate, the launch is rejected because the profile name doesn't exist. Wrong: silent and dangerous. Another existing profile would attach a different role, so the server would quietly get someone else's permissions, too many or too few, and I would only find out when an S3 call failed, or never if it had too many.
+- **Key pair (Lab 03).** Missing: immediate, `InvalidKeyPair.NotFound`. Wrong: silent until much later. The instance runs perfectly, and the problem only appears the first time someone tries to SSH in with the private key they actually have.
+- **User-data script (Lab 03).** This one is always silent. EC2 does not run or check the script at launch, it just stores it, so a typo still gives a successful `run-instances`. The failure only appears after boot, when nginx isn't there, and the only evidence is in `/var/log/cloud-init-output.log` on a machine I may not be able to log into.
+
+The pattern: if something doesn't exist, the API refuses immediately. If it exists but is the wrong one, the API is happy and the failure shows up later as a symptom, which is much harder to trace.
 
 **2. Why is the policy valid when the bucket doesn't exist, and what
 changes when it's created?**
@@ -143,18 +147,16 @@ unit or cron job — that pulls the latest version on its own schedule,
 independent of whether the instance ever reboots.
 
 **4. Auto-assigned public IP vs. Elastic IP.**
-The auto-assigned address comes from a pool AWS owns, is free, belongs to
-the instance only while it's running, and is replaced with a different
-one every time the instance stops and starts. An Elastic IP is owned by
-my account, stays allocated until I release it, survives a stop/start
-unchanged, and costs money the moment it's allocated but not attached to
-a running instance. Because the Elastic IP's identity is separate from
-any one instance, I could move it from a failed instance to a standby
-during a failover and nothing pointing at that address — DNS included —
-would need to change. (On this Floci build I couldn't actually watch the
-auto-assigned address disappear on stop — the field just stayed
-`127.0.0.1` throughout — so that specific behaviour is reasoned from the
-lab text rather than something I observed.)
+- **Who owns it.** The auto-assigned address belongs to AWS's pool and is only lent to the instance. The Elastic IP is allocated to *my account*, and I decide which instance it points at.
+- **When it changes.** The auto-assigned address is released when the instance stops and a different one is given when it starts again. The Elastic IP stays the same through stop/start, and even after the instance is terminated, until I release it.
+- **What it costs.** Since 1 February 2024, AWS charges **$0.005 per hour for every public IPv4 address**, whether it is auto-assigned or an Elastic IP, attached or idle. That is about $3.65 a month each (the handout's "$3.60 for an unassociated Elastic IP" is the same rate over 720 hours). So neither is free any more. The difference is that an Elastic IP keeps costing money while it sits unattached, whereas an auto-assigned address simply disappears with the instance.
+- **On stop.** The auto-assigned address is gone and anything pointing at it (DNS, a firewall rule on campus, a bookmark) breaks. The Elastic IP stays allocated and comes back attached when the instance starts.
+
+**A failover only possible because of this:** if `usms-web-01` breaks, I launch a replacement from the golden AMI and run `aws ec2 associate-address --allocation-id <usms-web-eip> --instance-id <new-instance>`. In seconds, the same public address points at the new server. DNS, users and the campus firewall never notice. With an auto-assigned address, the replacement would get a brand-new IP and every reference to the old one would have to change.
+
+(On Floci the public address field showed `127.0.0.1` the whole time, so I could not watch the auto-assigned address disappear on stop. This part is reasoned from the lab text, not observed.)
+
+Source: [Amazon VPC pricing, public IPv4 addresses](https://aws.amazon.com/vpc/pricing/).
 
 **5. EBS volumes vs. snapshots across Availability Zones.**
 A volume lives in one AZ's own storage fabric, so it can only attach to
@@ -183,18 +185,22 @@ reason — Floci boots no operating system at all — which is the same class
 of fault the checklist can't catch, just for a different underlying cause.
 
 **7. Every difference between `usms-web-01` and `usms-db-01`.**
-Both are `t3.micro` from the same AMI, so every difference comes from
-placement and configuration, not the machine itself.
-- **Instance-level** (chosen per launch): the instance profile (web has
-  one, db has none), the security group attached (`usms-app-sg` vs.
-  `usms-db-sg`), the key pair and tags, and the user-data script (only
-  the web instance got one).
-- **Subnet-level** (inherited, not chosen by the instance): whether a
-  public address gets assigned at all (`MapPublicIpOnLaunch`), and which
-  route table applies — the public subnet's route table points at the
-  internet gateway, the private subnet's points at the NAT gateway. The
-  NACL attached to each subnet is also a subnet-level property.
-- **VPC-level** (shared by both, not a difference at all): the
-  `10.0.0.0/16` address space, and the internet gateway and NAT gateway
-  that the two route tables point to — both instances sit inside the same
-  VPC, so this layer is identical for both.
+Both are `t3.micro` from the same AMI, so every difference comes from how and where they were launched.
+
+**Properties of the instance** (chosen at launch, or attached to it afterwards):
+- **Security group:** `usms-app-sg` (80, 443, SSH) vs `usms-db-sg` (5432 from the app tier only).
+- **Instance profile:** the web server has `usms-ec2-app-profile` (S3 access through the role); the database has none, on purpose.
+- **Elastic IP:** `usms-web-eip` is associated with the web server; the database has no stable public address at all.
+- **Data volume:** `usms-web-data-vol` was created for the web server (8 GiB gp3 with `DeleteOnTermination=False`); the database has only its root volume. (On Floci the attach failed, but in the design it belongs to the web server.)
+- **User data:** the web server got the nginx bootstrap script; `usms-db-01` was launched without one.
+- **Tags and name:** `Tier=web` vs `Tier=data`, and their Name tags.
+- **Private IP address:** each gets its own, picked from its subnet's range.
+
+**Properties of the subnet** (the instance inherits them just by being placed there):
+- **Auto-assigned public IP:** `usms-public-subnet-a` has `MapPublicIpOnLaunch=true`, `usms-private-subnet-a` has it off, which is why the database gets no public address.
+- **Route table:** public → `0.0.0.0/0` to `usms-igw`; private → `0.0.0.0/0` to `usms-nat` (plus the S3 endpoint). This is what really makes one public and the other private.
+- **Network ACL:** the default NACL vs `usms-private-nacl`.
+- **Address range:** 10.0.1.0/24 vs 10.0.3.0/24. Both are in `us-east-1a`, so the AZ is not a difference.
+
+**Properties of the VPC** (shared, so not differences at all): the `10.0.0.0/16` address space, DNS settings, the internet gateway and the NAT gateway themselves. Both instances live inside the same `usms-vpc`.
+
