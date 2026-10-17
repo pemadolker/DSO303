@@ -2,7 +2,9 @@
 # Verify every Lab 04 artefact exists and is configured correctly.
 # Exit 1 if anything is missing. Read-only; safe to run at any time.
 # PASS count after Lab 05 Step 13 (enrolment-sg now sourced from usms-alb-sg,
-# not usms-app-sg): previously N, now N+1 (one new check added). An
+# not usms-app-sg): previously 38 checks, now 39 (Lab 05 Exercise 2 added one).
+# Result on this Floci build: PASS=38 FAIL=1 - the usms-alb-sg source check,
+# because Floci does not return UserIdGroupPairs (see notes/lab-05-notes.md). An
 # undocumented count is worse than no count at all: with no count, a
 # reader checks the output for FAIL=0 and trusts it; with a stale
 # documented count, a reader sees a number that LOOKS authoritative and
@@ -129,7 +131,7 @@ check "execution policy is valid JSON" \
   "python3 -m json.tool policies/usms-ecs-task-execution-policy.json"
 check "no task definition document contains an unexpanded variable" \
   "! grep -q '[$]' templates/lab-04-taskdef.json"
-check "no secret is tracked by git" "! git ls-files | grep -q '^outputs/'"
+check "no secret is tracked by git (outputs/.gitkeep is the one allowed file)" "! git ls-files outputs/ | grep -qv '^outputs/\.gitkeep$'"
 
 echo; echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

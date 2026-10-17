@@ -90,7 +90,7 @@ check "configs/lab-02.env has no empty values" \
   "! grep -qE 'export [A-Z_]+=$|=None$' configs/lab-02.env"
 check "policies/usms-db-sg-ingress.json is valid JSON" \
   "python3 -m json.tool policies/usms-db-sg-ingress.json"
-check "no secret is tracked by git" "! git ls-files | grep -q '^outputs/'"
+check "no secret is tracked by git (outputs/.gitkeep is the one allowed file)" "! git ls-files outputs/ | grep -qv '^outputs/\.gitkeep$'"
 check ".gitignore uses outputs/* not outputs/" "grep -q '^outputs/\*' .gitignore"
 
 echo; echo "PASS=$PASS  FAIL=$FAIL"

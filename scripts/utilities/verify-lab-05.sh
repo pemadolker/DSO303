@@ -149,7 +149,7 @@ check "templates/lab-05-service-load-balancers.json is valid JSON" \
   "python3 -m json.tool templates/lab-05-service-load-balancers.json"
 check "no Lab 05 document contains an unexpanded variable" \
   "! grep -q '[\$]' templates/lab-05-listener-default-actions.json templates/lab-05-service-load-balancers.json policies/usms-enrolment-sg-ingress-alb.json"
-check "no secret is tracked by git" "! git ls-files | grep -q '^outputs/'"
+check "no secret is tracked by git (outputs/.gitkeep is the one allowed file)" "! git ls-files outputs/ | grep -qv '^outputs/\.gitkeep$'"
 
 echo; echo "PASS=$PASS  FAIL=$FAIL"
 

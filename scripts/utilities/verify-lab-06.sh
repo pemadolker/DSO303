@@ -160,7 +160,7 @@ check "suspended-state document is valid JSON and does NOT suspend scale-out" \
   "python3 -c \"import json,sys;d=json.load(open('templates/lab-06-suspended-state.json'));sys.exit(0 if d.get('DynamicScalingOutSuspended') is False else 1)\""
 check "no Lab 06 document contains an unexpanded variable" \
   "! grep -l '[\$]' templates/lab-06-*.json"
-check "no secret is tracked by git" "! git ls-files | grep -q '^outputs/'"
+check "no secret is tracked by git (outputs/.gitkeep is the one allowed file)" "! git ls-files outputs/ | grep -qv '^outputs/\.gitkeep$'"
 
 echo; echo "PASS=$PASS  FAIL=$FAIL"
 
