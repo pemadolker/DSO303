@@ -303,27 +303,18 @@ just a mutable attribute - Exercise 1 changed it from the default after
 creation with a plain `modify-target-group-attributes` call, no recreation
 needed.
 
-**4.** When ECS decides to stop a task, the target group first stops routing
-*new* requests to it, but a request that already arrived and is in flight
-keeps being served - the load balancer does not hang up on it. Two timers
-govern what happens next, configured in two different places. The target
-group's own `deregistration_delay.timeout_seconds` (default 300, this lab's
-value 30) is how long the load balancer continues to allow in-flight
-connections to that target to finish before it's fully removed from
-rotation. Separately, the container's own `stopTimeout` (set in the task
-definition, not the target group) is how long ECS waits after sending a
-graceful shutdown signal to the container before force-killing it. For the
-in-flight request to succeed, the container has to finish responding before
-whichever of those two timers runs out first - if `stopTimeout` is shorter
-than how long the application takes to finish the response, the container
-can be killed mid-response even though the load balancer was still willing
-to wait. With `deregistration_delay` left at its default of 300 seconds
-instead of this lab's 30, an in-flight request would have a much larger
-window to complete safely, but it also means ECS has to wait that much
-longer before a task being replaced is considered fully drained - a rolling
-deployment or a scale-down would take noticeably longer to finish, since
-each outgoing task lingers in the "draining, still allowed to finish
-in-flight work" state for up to five minutes instead of thirty seconds.
+**4.** Four timers are involved, and the important thing is that ECS runs them **one after the other**, not side by side.
+
+1. **Deregistration delay** (target group attribute `deregistration_delay.timeout_seconds`, ours set to 30 s in Step 7, AWS default 300 s). When ECS decides to stop the task, it first deregisters it from `usms-enrolment-tg`. The target goes into `draining`: the load balancer stops sending it **new** requests, but requests already in flight are allowed to finish. ECS waits until the target is fully drained (or the delay runs out) before going further.
+2. **Stop timeout** (`stopTimeout` in the task definition's container definition, or the ECS agent's `ECS_CONTAINER_STOP_TIMEOUT`, default 30 s). Only *after* draining does ECS send the container SIGTERM, and if the process hasn't exited within the stop timeout, SIGKILL.
+3. **The load balancer's idle timeout** (load balancer attribute `idle_timeout.timeout_seconds`, ours 60 s, read back in Step 5). A connection with no data moving for this long is closed, so a single very slow request can be cut off even during draining.
+4. **The health check interval and threshold** (target group, 30 s × 2) do not apply here, because the task is leaving on purpose, not failing.
+
+**Does the request succeed?** Yes, in the normal case. The request had already been routed to the task before it was deregistered, so draining lets it finish, and SIGTERM only arrives after draining. It only fails if the request takes longer than the deregistration delay (30 s for us). The load balancer then closes the connection, and SIGTERM, then SIGKILL, can follow while the response is still being written.
+
+**With 300 s instead of 30 s:** a long request has up to five minutes to finish, so almost nothing in flight is ever cut off. The price is speed: every task being replaced sits in `draining` for up to five minutes, so a rolling deployment or a scale-in takes much longer, and the old tasks keep costing money while they wait. For an API whose requests take well under a second, 30 s is plenty; 300 s mostly makes deployments slow.
+
+Sources: [Optimize load balancer connection draining parameters for Amazon ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-connection-draining.html); [AWS re:Post: graceful shutdown and connection draining for ECS](https://repost.aws/knowledge-center/ecs-graceful-shutdown-connection-draining-deployments).
 
 **5.** The case for updating the verification script immediately is that an
 assertion which no longer matches reality is actively misleading - every

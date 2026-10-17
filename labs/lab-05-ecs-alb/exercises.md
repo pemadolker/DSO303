@@ -70,6 +70,10 @@ forced to `FAIL=0`.
 Committed with a message explaining the architectural reason for the change,
 not the line diff.
 
+The new PASS count is written in a comment at the top of `verify-lab-04.sh`: 39 checks now, 38 before. An undocumented count is worse than none, because a reader who sees a number assumes it is current and stops checking. A stale "38 checks" looks authoritative while hiding that a check was added or removed.
+
+**When updating a verification script is right, and when it hides a regression.** Updating it is right when the *architecture* changed on purpose and the check now asserts the same underlying property in its new form. Here, "the tasks accept traffic only from one named group" stayed the same; only the group changed from `usms-app-sg` to `usms-alb-sg`. It hides a regression when you change the check just to make red output go green, without being able to name the deliberate change that made the old assertion untrue. Then the script has stopped protecting you from exactly the mistake it was written to catch.
+
 ## Exercise 3 - Problem solving: a load balancer report tool
 
 ![Exercise 3](../../screenshots/lab5/e3.png)
@@ -97,14 +101,9 @@ output running from `~` and from `labs/lab-05-ecs-alb/`.
 
 ![Exercise 4](../../screenshots/lab5/e4.png)
 
-**What changed.** The network path to the enrolment API went from
-`usms-web-01 -> usms-enrolment-sg` directly, to `usms-web-01 -> usms-enrolment-alb
-(internet-facing, public subnets) -> usms-enrolment-tg -> tasks`. The security
-group chain went from `usms-enrolment-sg` admitting `usms-app-sg` directly, to
-`usms-enrolment-sg` admitting `usms-alb-sg` (though per Exercise 2's finding,
-the old `usms-app-sg` rule was never actually removed at the data level on
-this build, despite the command reporting success - architecturally the
-intent and the correct commands are both in place).
+**What changed.** The network path to the enrolment API went from `usms-web-01` calling the tasks directly to clients calling `usms-enrolment-alb`, an internet-facing load balancer in the public subnets, which forwards to the tasks through `usms-enrolment-tg`. The security groups changed so that `usms-enrolment-sg` admits port 80 only from `usms-alb-sg`, the load balancer's group, instead of from `usms-app-sg`, the web tier's group.
+
+(On this Floci build the revoke of the old `usms-app-sg` rule printed success but the rule stayed. The table below shows both the intended and the observed state.)
 
 **Internal vs. internet-facing.** `--scheme internal` would change Step 5's
 command only in that one flag (nodes would still need two AZs, but could sit
@@ -112,9 +111,10 @@ in the private subnets instead of public ones); the DNS name would still
 resolve, but only to private addresses reachable from inside the VPC - nothing
 about the listener, target group, or health check configuration changes.
 Given the portal (`usms-web-01`) is the only known client and it is inside the
-same VPC, `internal` is the right recommendation: it removes the only
-`0.0.0.0/0` rule in the whole architecture while costing nothing in
-capability. The other side in two sentences: if USMS plans to let students
+same VPC, `internal` is the right recommendation: the enrolment API stops
+being reachable from the internet at all, and the portal loses nothing. It
+also saves the public IPv4 charge, because an internal load balancer has no
+public addresses. The other side in two sentences: if USMS plans to let students
 check enrolment status directly from their own devices, not just through the
 portal, without a client VPN, internet-facing becomes unavoidable, and
 reversing the choice later means re-provisioning the load balancer rather than
@@ -128,20 +128,35 @@ editing one flag.
 | What can reach the tasks | `usms-app-sg` (i.e. `usms-web-01`) only | `usms-alb-sg` only |
 | What can reach the tasks directly | `usms-web-01`, by address, directly | Intended: nothing (the old rule is revoked in Step 13). **Observed on 1.5.34:** the revoke printed `True` but the rule stayed, so the old path was still open - see Step 13 in the README |
 
-**Monthly cost estimate** (US East, N. Virginia pricing). An ALB is billed at
-$0.0225/hour flat, plus $0.008 per LCU-hour, billed on whichever of four
-dimensions (new connections/sec, active connections/min, processed GB/hour,
-rule evaluations/sec) is highest that hour - for a low-traffic internal API
-like this one, rule evaluations is the dimension that dominates, not
-bandwidth, because request volume is tiny but every request is still
-evaluated against every rule. Idle: 730 hours x $0.0225 = $16.43/month, plus a
-fraction of an LCU (well under 1 LCU-hour/month at near-zero traffic) ~=
-$16.50-17/month total. Under moderate load the estimate stays close to the
-idle figure, since LCU charges only become material at real production
-volume. For comparison, the Fargate tasks cost $0.0405/vCPU-hour +
-$0.00445/GB-hour; running 24/7 at this lab's task sizing, two small tasks cost
-roughly the same order of magnitude as the load balancer itself. (Sources:
-AWS Elastic Load Balancing pricing, AWS Fargate pricing.)
+**Monthly cost estimate** (US East, N. Virginia, 730 hours a month).
+
+An Application Load Balancer is billed in two parts: **$0.0225 per hour** just for existing, and **$0.008 per LCU-hour** for usage. An LCU is measured on four dimensions, and each hour you pay for whichever one is highest:
+
+| Dimension | 1 LCU = |
+|---|---|
+| New connections | 25 per second |
+| Active connections | 3,000 per minute |
+| Processed bytes | 1 GB per hour (EC2, container or IP targets) |
+| Rule evaluations | 1,000 per second, **but the first 10 rules are free**, and with 10 or fewer rules the dimension is ignored |
+
+Our listener has 2 rules (the `/alb-health` rule and the default), so rule evaluations cost nothing here. For a small API that sends short JSON answers, processed bytes stays tiny too. The dimension that usually wins is **new connections**, because every client that doesn't reuse a keep-alive connection opens a new one per request.
+
+**Idle** (no traffic at all):
+- load balancer hours: 730 × $0.0225 = **$16.43**
+- public IPv4: an internet-facing ALB in 2 Availability Zones has at least 2 public addresses, 2 × $0.005 × 730 = **$7.30**
+- LCUs: close to 0
+- **Total idle ≈ $23.73 per month**
+
+**Under load.** My assumption: during working hours (10 hours a day, 22 days a month = 220 hours) the portal sends **20 requests per second**, without keep-alive, with answers of about **2 KB**.
+- new connections: 20 ÷ 25 = **0.8 LCU**
+- processed bytes: 20 × 2 KB × 3,600 s ≈ 0.15 GB per hour = **0.15 LCU**
+- rule evaluations: free (2 rules)
+- so new connections dominates: 0.8 LCU × $0.008 × 220 h ≈ **$1.41**
+- **Total under this load ≈ $25.14 per month.** Even at 10 times this traffic, LCUs would add about $14, so the fixed hourly charge stays the biggest part of the bill.
+
+**For comparison, the two Fargate tasks** (0.25 vCPU, 1 GB each, from Lab 04): 2 × $0.014565 × 730 = **$21.26 per month**. The load balancer in front costs about as much as the service behind it.
+
+Sources: [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/) (hourly rate, LCU rate, the four dimensions and the free-rules rule); [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) (public IPv4); [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/).
 
 **HTTPS plan.** In order: (1) request a public TLS certificate for the ALB's
 domain from AWS Certificate Manager (ACM) - issuance and renewal of public
@@ -156,9 +171,42 @@ host/path, 301), so a plaintext request never reaches a target. The Step 4
 the load balancer on that port - the certificate and the 443 listener are
 what make anything *answer* on it.
 
-**The tidy-up.** `usms-results-tg` and its priority-20 rule, from Exercise 1,
-were deleted (rule first, then the target group, in dependency order) and
-confirmed gone via `describe-rules`.
+To keep the two halves apart, as the brief asks:
+- **What opens the port:** the inbound rule for TCP 443 from `0.0.0.0/0` on `usms-alb-sg` (already added in Step 4). It is free.
+- **What makes something listen on it:** the ACM certificate (free, from AWS) plus the HTTPS:443 listener that uses it (free; it only adds to the normal ALB charges). The one thing that needs something outside AWS is proving we own the domain: whoever runs the university's DNS has to add the CNAME record ACM gives us. If the domain were hosted in Route 53, ACM could add it for us.
+- **The rule on port 80:** change the HTTP:80 listener's default action from `forward` to a **`redirect`** action (protocol HTTPS, port 443, status `HTTP_301`), so nobody can log in over plain HTTP.
+
+Sources: [ACM pricing](https://aws.amazon.com/certificate-manager/pricing/) ("ACM issues certificates at no cost for use with services integrated with ACM"); [Requesting a public certificate](https://docs.aws.amazon.com/acm/latest/userguide/gs-acm-request-public.html); [Create an HTTPS listener](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html) ("you must deploy at least one SSL server certificate on your load balancer").
+
+**The tidy-up.** The two practice objects from Exercise 1 are the priority-20 rule and `usms-results-tg`. The rule goes first, because a target group that a rule still forwards to can't be deleted.
+
+```
+What is deleted:     the priority-20 listener rule (/results, /results/* -> usms-results-tg)
+What depends on it:  nothing; no service is behind /results
+Reversible?          yes; recreate it from templates/lab-05-ex1-results-rule-*.json
+Effect on later labs: none; Section 8's script checks the /alb-health rule (priority 10), which stays
+```
+
+```bash
+RULE_ARN=$(aws elbv2 describe-rules --listener-arn "$USMS_ALB_LISTENER_ARN" \
+  --query "Rules[?Priority=='20'].RuleArn | [0]" --output text)
+aws elbv2 delete-rule --rule-arn "$RULE_ARN"
+```
+
+```
+What is deleted:     usms-results-tg, the empty practice target group
+What depends on it:  nothing, once the rule above is gone (it has no targets)
+Reversible?          yes; recreate it with the Exercise 1 create-target-group command
+Effect on later labs: none; Lab 06's metric uses usms-enrolment-tg, which stays
+```
+
+```bash
+RESULTS_TG_ARN=$(aws elbv2 describe-target-groups --names usms-results-tg \
+  --query 'TargetGroups[0].TargetGroupArn' --output text)
+aws elbv2 delete-target-group --target-group-arn "$RESULTS_TG_ARN"
+```
+
+The proof is in the screenshot at the top of this exercise: `describe-rules` now lists only `default` and `10`, and `describe-target-groups --names usms-results-tg` returns `TargetGroupNotFound`. `./scripts/utilities/verify-lab-05.sh` then reported <<paste PASS/FAIL line>>, the same single failure as before (the unreadable security-group source).
 
 ## Exercise 5 - Integration: the ResourceLabel hand-off to Lab 06
 
@@ -181,5 +229,9 @@ ARNs, the scalable resource ID, the scaling dimension, current desired
 count, and a timed `force-new-deployment` measurement. That measurement
 (~1.6 seconds) is not meaningful on this build: per Step 14's finding,
 `force-new-deployment` is a confirmed no-op here, so the timer measured API
-acknowledgment latency, not a real task replacement. I did not record a Fargate startup figure in the file; for Lab 06's cooldown sizing use the
-measured startup from Lab 06's own scale-out, not a documented number.
+acknowledgment latency, not a real task replacement. As the exercise asks
+when the measurement is meaningless, the readiness file says so and records
+the start-up figure instead: **20-60 seconds** for a Fargate task to start on
+real AWS (Lab 04 handout, Section 11). Lab 06's scale-out cooldown should be
+sized against that, plus two passed health checks (2 × 30 s) before a new
+task receives traffic.
