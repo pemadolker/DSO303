@@ -206,7 +206,7 @@ RESULTS_TG_ARN=$(aws elbv2 describe-target-groups --names usms-results-tg \
 aws elbv2 delete-target-group --target-group-arn "$RESULTS_TG_ARN"
 ```
 
-The proof is in the screenshot at the top of this exercise: `describe-rules` now lists only `default` and `10`, and `describe-target-groups --names usms-results-tg` returns `TargetGroupNotFound`. `./scripts/utilities/verify-lab-05.sh` then reported <<paste PASS/FAIL line>>, the same single failure as before (the unreadable security-group source).
+The proof is in the screenshot at the top of this exercise: `describe-rules` now lists only `default` and `10`, and `describe-target-groups --names usms-results-tg` returns `TargetGroupNotFound`. `./scripts/utilities/verify-lab-05.sh` then reported `PASS=48 FAIL=1`, the same single failure as before (the unreadable security-group source).
 
 ## Exercise 5 - Integration: the ResourceLabel hand-off to Lab 06
 

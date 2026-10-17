@@ -307,7 +307,7 @@ aws ec2 authorize-security-group-ingress \
   --group-id "$USMS_DB_SG" \
   --ip-permissions '[{"IpProtocol":"tcp","FromPort":5432,"ToPort":5432,"UserIdGroupPairs":[{"GroupId":"'"$EXAM_SG_ID"'","Description":"PostgreSQL from the exam-results service"}]}]' \
   --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text
-# <<paste the sgr- ID it prints>>
+#  sgr-67d4429055e325cbe
 ```
 
 ## Exercise 5 - Integration: second Availability Zone for the private tier

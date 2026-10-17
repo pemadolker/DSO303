@@ -153,7 +153,7 @@ aws ecs update-service --cluster usms-ecs-cluster --service usms-results-svc --d
 aws ecs delete-service --cluster usms-ecs-cluster --service usms-results-svc
 aws ecs describe-services --cluster usms-ecs-cluster --services usms-results-svc \
   --query 'services[0].status' --output text
-# <<paste: INACTIVE (or "None" if this build drops it completely)>>
+# INACTIVE
 ```
 
 ### Final verification

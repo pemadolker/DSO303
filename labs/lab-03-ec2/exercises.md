@@ -109,7 +109,7 @@ t3 instances launch in **unlimited** mode by default, and we never changed it, s
 aws ec2 describe-instance-credit-specifications --instance-ids "$USMS_WEB_INSTANCE" --output table
 ```
 
-<<paste the output; on real AWS it should show CpuCredits = unlimited>>
+CpuCredits: unlimited  (i-66fc3b0b10a198919)
 
 That is probably part of why finance thinks the EC2 line is too high: the bill is not just the $7.59 instance, it includes surplus credits every busy day.
 
@@ -149,7 +149,18 @@ aws ec2 describe-addresses \
   --query 'Addresses[?AssociationId==null].[AllocationId,PublicIp,Tags[?Key==`Name`]|[0].Value]' --output table
 ```
 
-<<paste the three tables>>
+```
+DescribeInstances (Ephemeral=true)
+  i-a737481cc69170060   usms-admin-01-host   terminated
+
+DescribeVolumes (status=available)
+  vol-a43428afc5a80af0c   usms-web-data-vol
+
+DescribeAddresses (not associated)
+  eipalloc-a64be5014af20c8d6   54.56.239.64   usms-nat-eip
+```
+
+`usms-nat-eip` shows as unassociated only because this Floci build doesn't record the NAT gateway's link to its Elastic IP. On real AWS it would show as associated with the NAT gateway's network interface. It belongs to Lab 02, so it stays.
 
 What the inventory showed and what I decided:
 
@@ -200,7 +211,7 @@ Effect on later labs: none; usms-web-01 and usms-db-01 have their own containers
 
 ```bash
 docker ps -a --filter status=created --filter status=exited
-docker rm <<container names from the line above>>
+docker rm floci-floci-course-ec2-i-03ea10e057afa9894 floci-floci-course-ec2-i-a737481cc69170060
 ```
 
 `./scripts/utilities/verify-lab-03.sh` reported the same result before and after the cleanup, so nothing the core build needed was touched.

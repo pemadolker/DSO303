@@ -48,7 +48,7 @@ Path B.
 **Observed:** `usms-alb-sg` created in `usms-vpc` (`sg-d6a9f362a51555d9e`) with one inbound rule, tcp/80
 from `0.0.0.0/0`. The internet-facing load balancer needs that rule to work at all.
 
-"Your turn" - open tcp/443:
+"Your turn" exercise - open tcp/443:
 
 ![Step 4 Your turn - port 443](../../screenshots/lab5/4b.png)
 
@@ -78,7 +78,7 @@ both read back.
 `usms-vpc`, health check `GET /` on the traffic port every 30 s, timeout 5 s, healthy 2, unhealthy 2,
 matcher `200`. Attached to no load balancer yet (`LBs: 0`).
 
-"Your turn" - widen the matcher to `200-399`, then put it back:
+"Your turn" exercise - widen the matcher to `200-399`, then put it back:
 
 ![Step 6 - matcher 200-399](../../screenshots/lab5/6widen.png)
 ![Step 6 - matcher back to 200](../../screenshots/lab5/6restore.png)
@@ -126,8 +126,8 @@ The screenshot shows the result: one `loadBalancers` entry for `usms-enrolment-t
 
 **Observed:** both task addresses (`172.21.0.3`, `172.21.0.4`) registered themselves in the target group and
 read `healthy` on the first poll. I did not trust that on its own - see Step 12.
-
-"Your turn" - change `desiredCount` and watch the target group:
+ 
+"Your turn" exercise - change `desiredCount` and watch the target group:
 
 ![Step 11 - desired 3, a new target appears](../../screenshots/lab5/11scale3.png)
 ![Step 11 - desired 2, back to two targets](../../screenshots/lab5/11scale2.png)
@@ -162,7 +162,13 @@ target addresses 3 m 39 s later, so no task was replaced.
 **Floci limitation (1.5.34):** `force-new-deployment` is a no-op here. I could not observe the
 `initial -> healthy -> draining` sequence and describe it from the lab text instead.
 
-<!-- TODO screenshots: Step 13 (revoke attempts + rule count) and Step 14 (list-tasks before/after). -->
+![Step 13 - verify-lab-04 before and after, and the three rules still present](../../screenshots/lab5/step13.png)
+
+The handout expects the Step 13 diff to show one check changing from ok to FAIL. On this build the
+diff was empty: the revoke never took effect, and the source-group check could not read
+`UserIdGroupPairs` in either run, so nothing changed. The rule count above is the real evidence.
+
+![Step 14 - the same task ARNs before and after force-new-deployment](../../screenshots/lab5/step14.png)
 
 ## 12. Rule, persistence and audit (Steps 15-17)
 
