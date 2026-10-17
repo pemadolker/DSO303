@@ -83,76 +83,78 @@ Therefore, if traffic suddenly increases at 08:03, ECS will still try to keep th
 
 This is why a fixed desired count cannot handle a predictable traffic peak properly.
 
-### Proposed capacity plan
+Last year's outage shows this exactly. Enrolment opened at 08:00 and the service fell over at 08:03: two tasks were simply not enough, and nothing could add a third without someone noticing, logging in and typing a command. Even a metric-based policy alone would have been late. A CPU alarm usually needs a few minutes of high readings before it fires, and a new Fargate task then needs 20-60 seconds to start plus two passed health checks before it gets traffic. By then the damage at 08:03 was done. The capacity has to be there *before* 08:00.
 
-For the Lab 06 scaling design, I would start with:
+### Where the numbers come from
 
-| Capacity | Proposed value | Reason |
-|---|---:|---|
-| Minimum | 2 tasks | The current service already runs 2 tasks and spans two private subnets/AZs. |
-| Scheduled floor | 8 tasks | Using the lab workload assumption of 200 requests/second and 25 requests/second per task: `200 ÷ 25 = 8` tasks. |
-| Maximum | 9 tasks | 8 tasks cover the calculated workload and 1 additional task provides headroom. |
+The brief doesn't give request rates, so I state my assumptions here. Each one can be replaced with a real figure once we have last year's logs or a load test.
 
-The scheduled floor of 8 should be active shortly before the Monday enrolment peak rather than waiting for the traffic to increase. This is important because a new Fargate task does not become ready instantly.
+| Assumption | Value | Why |
+|---|---|---|
+| Students enrolling | 4,000 | USMS is a mid-sized university; replace with the Registrar's real count |
+| Requests per student during enrolment | 30 | log in, view modules, add/drop a few, confirm, check timetable |
+| Share of the week's traffic in the first 20 minutes | 90% | given in the brief |
+| Peak vs average inside those 20 minutes | 2× | everyone clicks at 08:00 exactly, so the first minutes are busier than the average |
+| Requests one task can serve | 25 per second | for a 0.25 vCPU task; **this must be confirmed by a load test** |
 
-The maximum of 9 is based on the supplied workload assumption, not on measured production traffic. In Lab 06, the actual maximum should be adjusted after load testing and monitoring.
+Derivation:
 
-### Cost considerations
+- Requests in the window: 4,000 × 30 × 0.9 = **108,000** in 1,200 seconds = **90 requests/second** on average.
+- Peak: 90 × 2 = **180 requests/second**.
+- Tasks needed at peak: 180 ÷ 25 = 7.2, so **8 tasks**.
+- Round up to an even number so both Availability Zones carry the same load: **10 tasks (5 per AZ)**. That leaves 2 tasks of headroom, so the service survives losing a task, or a burst 25% above my estimate.
 
-The minimum of 2 keeps the normal cost lower. If the service stayed unnecessarily high, such as 8 or 9 tasks all month, we would pay for capacity that is mostly unused.
+### Proposed capacity plan (handed to Lab 06)
 
-If the capacity is too low, the application can become overloaded during the peak. This could cause slower responses or failed requests, which is more serious during the first twenty minutes of enrolment.
+| Setting | Value | Too high costs... | Too low costs... |
+|---|---:|---|---|
+| **Minimum** | 2 tasks | paying for idle tasks all year, every night and weekend | below 2, one task failing, or one AZ going down, takes the whole service offline |
+| **Scheduled floor** | 10 tasks, Monday 07:40-09:00 | about 70 cents a month for 80 minutes a week, so the real risk is setting it too low | a repeat of 08:03: users see errors before scaling reacts |
+| **Maximum** | 16 tasks | a runaway policy or a bot attack could scale far and bill heavily; 16 caps the worst case at about $0.23 an hour | if real demand is far above my estimate, scaling hits the ceiling and users get errors anyway |
 
-For the cost calculation I used the Fargate Linux/X86 rates for US East (N. Virginia):
+Why these times: the floor goes up at **07:40**, 20 minutes early, so new tasks have time to start, register with the target group and pass health checks well before 08:00. It drops back at **09:00**, after the 20-minute rush plus a safety margin. The maximum is 1.6× the floor, so target tracking still has room to add 6 tasks if my estimate is wrong.
 
-- vCPU: **$0.04048 per vCPU-hour**
-- memory: **$0.004445 per GB-hour**
+### What should trigger a change
 
-AWS describes Fargate pricing as being based on the vCPU and memory resources requested by each task.
+1. **A schedule**, for the part we can predict. Application Auto Scaling scheduled actions raise the minimum to 10 at 07:40 every enrolment Monday and drop it back to 2 at 09:00.
+2. **Target tracking**, for the part we can't. Keep the number of requests each task handles near a target (`ALBRequestCountPerTarget`, which Lab 05 Exercise 5 prepared), or keep CPU around 60% if only CPU is available. This catches demand above my estimate, and any busy period outside the schedule.
 
-Revision 2 uses 0.25 vCPU and 1 GiB memory, so one task costs approximately:
+What I would tell the team building the policies: **don't rely on reacting**. The schedule is what prevents the 08:03 failure; target tracking is only the safety net. Size the scale-out cooldown around the 20-60 second Fargate start time, scale in slowly (5-10 minutes) so tasks aren't removed in the middle of the rush, and test the whole thing on a quiet day before enrolment week.
 
-`(0.25 × $0.04048) + (1 × $0.004445)`
+### Monthly cost comparison
 
-`= $0.014565 per task-hour`
+Fargate Linux/x86, US East (N. Virginia): **$0.04048 per vCPU-hour** and **$0.004445 per GB-hour**. Revision 2 uses 0.25 vCPU and 1 GB:
 
-Using 730 hours as the monthly calculation:
+(0.25 × $0.04048) + (1 × $0.004445) = **$0.014565 per task-hour**, using 730 hours per month.
 
-### Option 1 – Today's fixed capacity of 2 tasks
+| Option | Calculation | Per month |
+|---|---|---:|
+| Fixed at today's 2 tasks | 2 × $0.014565 × 730 | **$21.26** |
+| Fixed at my peak of 10 tasks | 10 × $0.014565 × 730 | **$106.32** |
+| **Scheduled: 2 tasks, 10 during the Monday window** | $21.26 + 8 extra tasks × $0.014565 × 1.33 h × 4.33 Mondays | **$21.94** |
 
-`2 × $0.014565 × 730`
+Fixed at 2 is cheap and falls over. Fixed at 10 never falls over, but costs five times as much, and almost all of the extra task-hours are the 3 a.m. Sunday capacity finance complained about. The schedule gets the peak capacity for **68 cents a month** more than today. These figures cover Fargate compute only; the load balancer, logs and data transfer are the same in all three options.
 
-`≈ $21.26 per month`
+Source: [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/) (US East (N. Virginia): $0.000011244 per vCPU-second and $0.000001235 per GB-second, which come to the hourly rates above).
 
-### Option 2 – Fixed peak capacity of 9 tasks
+### Switching off the Exercise 1 service
 
-`9 × $0.014565 × 730`
+```
+What is deleted:     usms-results-svc, the practice service from Exercise 1 (desired count 1)
+What depends on it:  nothing; it is not in configs/lab-04.env and no load balancer points at it
+Reversible?          yes; recreate it with the Exercise 1 create-service command
+Effect on later labs: none; Lab 05 and Lab 06 only use usms-enrolment-svc
+```
 
-`≈ $95.69 per month`
+A service with running tasks can't be deleted directly, so I scaled it to 0 first, then deleted it, then checked:
 
-Therefore, running 9 tasks continuously would cost about **$74.43 more per month** than keeping 2 tasks continuously, based only on Fargate CPU and memory.
-
-This shows why scheduled scaling is preferable. We can keep the normal capacity low and increase it around the known enrolment period instead of paying for peak capacity throughout the whole month.
-
-These figures exclude other costs such as load balancing, logging, networking, and other AWS services.
-
-**Pricing source:** AWS Fargate Pricing – US East (N. Virginia): https://aws.amazon.com/fargate/pricing/
-
-### What should trigger scaling?
-
-For the future Lab 06 implementation, I would use two types of scaling:
-
-1. **Scheduled scaling** for the known Monday enrolment period. The service should increase its minimum/scheduled capacity before 08:00 and reduce it after the peak.
-2. **Metric-based scaling** as a safety mechanism. CPU utilisation, memory utilisation, or an application-level request metric could be used to increase capacity when actual demand is higher than expected.
-
-The scaling policy should aim to keep enough spare capacity so that the service does not wait for new tasks after the traffic has already reached its peak.
-
-### Exercise 1 resource removal
-
-The temporary `usms-results-svc` was removed after the exercise using the ECS service deletion command.
-
-The resource was deleted before the final Lab 04 verification.
-
+```bash
+aws ecs update-service --cluster usms-ecs-cluster --service usms-results-svc --desired-count 0
+aws ecs delete-service --cluster usms-ecs-cluster --service usms-results-svc
+aws ecs describe-services --cluster usms-ecs-cluster --services usms-results-svc \
+  --query 'services[0].status' --output text
+# <<paste: INACTIVE (or "None" if this build drops it completely)>>
+```
 
 ### Final verification
 
