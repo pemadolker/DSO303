@@ -1,10 +1,22 @@
 # Lab 05 Notes - ECS + ALB
 
-## Step 3 support path: Path A - full
+## Step 3 support path: Path B - control plane only
 All ELBv2 and ECS integration probes returned SUPPORTED (describe-load-balancers,
 create-load-balancer skeleton, describe-target-groups, create-target-group skeleton,
 describe-listeners, describe-account-limits, ecs update-service skeleton,
-ecs describe-services). Proceeding with every step as written.
+ecs describe-services), and Step 5 returned a load balancer ARN, so the probe alone
+pointed at Path A. Step 12 then decided it: the ALB's DNS name did not resolve and
+curl could not connect, which is the handout's definition of Path B. Every object
+was created and is describable; no request was ever served through the load
+balancer. Targets did report `healthy` (Step 11), but that is a control-plane
+field on this build, not evidence of a health check that ran.
+
+Observed vs reasoned on this build (Section 11):
+- Observed: every ELBv2 object, the service's loadBalancers entry, targets
+  registered by the service, rule ordering, the restart proof.
+- Reasoned only: a served request, real health probes, draining, rule evaluation,
+  HTTPS. The security-group cutover (Step 13) was issued but not applied by Floci
+  (see Step 13 below).
 
 ## Verify baseline entering Lab 05
 Lab 02 FAIL=1, Lab 03 FAIL=4, Lab 04 FAIL=1 - all pre-documented in their own
@@ -92,9 +104,9 @@ Docker network range, same limitation as Lab 03); the service correctly
 attached itself; and the security group chain exists even though its display
 is lost to the same UserIdGroupPairs bug seen in every previous lab.
 
-Conclusion: this lab sits on Path A for the control plane and Path B for the
-data path - a split the lab's own Step 3 framework doesn't quite have a single
-letter for, but Section 12.2 anticipates exactly this combination.
+Conclusion: this is Path B as the handout defines it ("objects are created and
+describable, but ... Step 12's curl does not connect"). The control plane is
+complete; the data path does not exist on this build.
 
 ## Step 13 - revoke-security-group-ingress does not work on this build at all
 Three separate revoke attempts failed to remove any rule, despite each

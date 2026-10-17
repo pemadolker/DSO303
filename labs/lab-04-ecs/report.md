@@ -119,9 +119,8 @@ Task role, reusing Lab 01's policy unchanged:
 | Failed check | Reason |
 |---|---|
 | `usms-enrolment-sg is sourced from usms-app-sg` | Floci does not retain `UserIdGroupPairs` (Section 6). The TCP/80 rule exists. |
-|
 
-I did not delete  recreate the security group to force FAIL=0. One caution: on revision 1 the check "exec role and task role are DIFFERENT" passed because the execution role was genuinely empty in revision 1 (Section 7) and an empty string differs from any ARN.
+I did not delete and recreate the security group to force FAIL=0. One caution: on revision 1 the check "exec role and task role are DIFFERENT" passed because the execution role was genuinely empty in revision 1 (Section 7) and an empty string differs from any ARN.
 
 ## 12. Exercises
 

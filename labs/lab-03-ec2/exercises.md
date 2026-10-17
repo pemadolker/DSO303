@@ -34,7 +34,7 @@ it once, since each failed launch leaves another un-removable
 
 ## Exercise 2 - Intermediate: a self-describing bootstrap
 
-I wrote `labs/lab-03-ec2/user-data-db.sh` (731 bytes): it installs
+I wrote `labs/lab-03-ec2/user-data-db.sh` (well under the 16 KB limit): it installs
 PostgreSQL, creates a `usms` database, and writes a marker file with the
 instance ID and a timestamp — checking for that marker *first* so a
 second run exits immediately and changes nothing. `bash -n` passed before
@@ -52,13 +52,15 @@ against itself, not a round trip through the API.
 
 ![usms-db-02 launch returning an instance ID, then terminated](../../screenshots/lab3/image-3.png)
 ![Docker logs confirming the same port-bind failure on usms-db-02's container](../../screenshots/lab3/dk.png)
-![describe-instances and the user-data-db.sh base64 check](../../screenshots/lab3/image copy.png)
+![describe-instances and the user-data-db.sh base64 check](../../screenshots/lab3/ex2-userdata-b64.png)
 
 The outer heredoc has to stay quoted so that my own shell doesn't expand
 `$MARKER` and the other variables while writing the file — they need to
 reach the instance unevaluated and only resolve at boot, on the instance
-itself. The idempotence comes entirely from the marker-file check at the
-top of the script. A second run of user data would only ever happen in
+itself. The idempotence comes from the marker-file check at the top of the
+script, together with `set -euo pipefail`: the marker is written last, so
+a failed install stops the script before the marker exists and a re-run
+retries it, instead of skipping a half-finished install forever. A second run of user data would only ever happen in
 practice if something deleted that marker and cloud-init were explicitly
 told to run user data on every boot (not the default), or if a brand-new
 instance were launched from an image that already carried the marker and
@@ -143,8 +145,9 @@ is allowed back in automatically, with no inbound rule required.
 
 ![usms-app-sg's default allow-all outbound rule](../../screenshots/lab3/image-copy-5.png)
 
-`USMS_BUCKET_NAME` wasn't already defined anywhere from Lab 1, so I added
-it to `configs/lab-03.env`. The readiness file
+`USMS_BUCKET_NAME=usms-student-data` is already exported by
+`configs/lab-01.env` (it has been there since Lab 1), so, as the exercise
+allows, nothing needed adding to `configs/lab-03.env`. The readiness file
 (`outputs/lab-03-s3-readiness.txt`) records the instance ID, the full
 profile → role → policy chain, the bucket ARN the policy already names,
 and the result of `head-bucket` against that bucket today — a 404, which

@@ -30,10 +30,19 @@ source configs/course.env
 
 ## Labs
 
-| Lab | Topic | Status |
-|-----|-------|--------|
-| 01  | IAM   | [x] complete |
-| 02  | VPC   | [ ] not started |
+| Lab | Topic | Status | Write-up |
+|-----|-------|--------|----------|
+| 01  | IAM   | [x] complete | `labs/lab-01-iam/`, `notes/lab-01-notes.md` |
+| 02  | VPC   | [x] complete | `labs/lab-02-vpc/`, `notes/lab-02-notes.md` |
+| 03  | EC2   | [x] complete | `labs/lab-03-ec2/`, `notes/lab-03-notes.md` |
+| 04  | ECS on Fargate | [x] complete | `labs/lab-04-ecs/`, `notes/lab-04-notes.md` |
+| 05  | ECS behind an ALB | [x] complete | `labs/lab-05-ecs-alb/`, `notes/lab-05-notes.md` |
+| 06  | ECS auto scaling | [x] complete (support path C) | `labs/lab-06-ecs-autoscaling/`, `notes/lab-06-notes.md` |
+| 07  | EKS | [ ] in progress | `notes/lab-07-notes.md` |
+
+Known Floci limitations (security-group references not returned, `revoke-security-group-ingress`
+not applied, no load-balancer data path, and others) are recorded in each lab's notes, with what
+real AWS would have done instead.
 
 ## Conventions
 

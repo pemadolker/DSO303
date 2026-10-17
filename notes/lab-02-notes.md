@@ -44,16 +44,6 @@ In case the private subnet in AZ b relies on NAT gateway which is only located i
 
 This example proves that the boundary of the availability zone is not limited by location of the private subnet only. The existence of a dependency like a NAT gateway may result in a cross AZ dependency. It would be better to have separate NAT gateway and private route table in each AZ.
 
-<!-- The NAT gateway itself needs to have access to the internet since it exists only for the purpose of translating private traffic to a public-facing address and sending it out. Thus, if one were to put it in the private subnet, it wouldn't have access to an IGW which means that it was stuck, just like everything else in that subnet -- it cannot reach the internet and provide NAT services to anyone unless it has access to the subnet with 0.0.0.0/0 -> igw route, i.e. the public subnet. 
-
-For the AZ question: our NAT gateway sits in usms-public-subnet-a (AZ a). If AZ a became
-unavailable, usms-private-subnet-b (which we created in Exercise 5, in AZ b) would lose all
-outbound internet access — even though every instance in that subnet is perfectly healthy
-and AZ b itself is fine. That's because NAT gateways are zonal resources, not
-VPC-wide/region-wide ones. The private route table for AZ b's subnet points at a NAT gateway
-that physically lives in a different, now-unreachable AZ.
-
-This indicates that the real availability boundary for accessing the internet lies in "is the NAT availability zone healthy", not in "is my subnet instance healthy". As a result, a single NAT does bring about the fact that the availability of internet access in the whole tier up until that point is limited to one AZs irrespective of the number of other AZs one has spread his/her subnets across. This is basically the whole point of having NAT gateway per each potential AZ in the production environment (that we have talked about while completing Exercise 4 as a real trade-off opportunity for one when talking about costs and availability). -->
 
 #### 5. This lab created a gateway endpoint for S3. Describe the path a request from a private instance to usms-student-data takes with the endpoint, and the path it would take without one. Identify which path leaves the AWS network and what that costs in money and in exposure.
 
@@ -71,25 +61,6 @@ By re-deriving the ID of the VPC with the help of the Name tag used in the comma
 
 The same idea was used in Lab 1 Step 14. The important point here is that one should not think that the fact that the command has been performed successfully means that the resource is saved for the future. The resource has to be checked again after the environment has been destroyed.
 
-<!-- 
-If I'd just reused $VPC_ID after the restart, all that would prove is that Bash still
-remembers a string I typed earlier in the same terminal session. It says literally nothing
-about whether Floci's actual backing store still has that VPC persisted to disk — the
-variable would hold the same text whether the VPC survived, got wiped, or never existed in
-the first place.
-
-Re-deriving it via `describe-vpcs --filters Name=tag:Name,Values=usms-vpc` forces an actual
-round-trip to the API after the restart. If the VPC didn't survive, that lookup would come
-back empty/None regardless of what my shell variable said. So the only way it returns the
-same VPC ID is if Floci's storage layer genuinely kept the resource across the stop/start
-cycle.
-
-This is the same logic as Lab 1 Step 14 — the whole point there was "don't trust that a
-policy attached just because the API call succeeded, go read the policy back and check it
-actually shows up correctly." Same idea here: don't trust persistence just because a create
-call succeeded once, go and independently re-query for the thing after deliberately
-disrupting the environment, and only trust what that independent query says. -->
-
 
 #### 7. Floci does not enforce security groups. Given that, explain how you can still be confident that the rules you wrote in Steps 14 and 15 are correct and describe one specific mistake that this lab's verification would catch and one that it would not.
 
@@ -103,27 +74,3 @@ On the other hand, there might be a case where the security groups are configure
 
 In summary, the verification gives us confidence that the security groups match our design, but does not prove that the network as a whole works the same way in our Floci environment as in the AWS cloud environment.
 
-<!-- 
-Since Floci accepts literally any security group configuration and doesn't check it against
-actual traffic, I can't rely on "did my connection get blocked/allowed as expected" as
-evidence — that test would pass identically whether my rules were right, wrong, or completely
-absent. What I actually have confidence in comes from reading the rule definitions back
-directly and checking them against what the requirement was: usms-app-sg allows exactly 80,
-443, and 22-scoped-to-VPC/bastion, and nothing else, which I confirmed by literally reading
-back describe-security-group-rules and counting/checking each one. Same for usms-db-sg only
-allowing 5432. That's a static-analysis kind of confidence, not a "traffic was tested"
-confidence — I'm trusting that the rule as declared matches the rule as intended, not that
-it's actually being enforced by anything.
-
-Something the verify script WOULD catch: if I'd forgotten to open port 80 on usms-app-sg
-entirely, or if I'd accidentally scoped it to some narrow CIDR instead of 0.0.0.0/0 — those
-are exactly the kind of "does the declared rule set match spec" checks the script runs, and
-it would correctly fail.
-
-Something it would NOT catch: literally the actual bug we hit — Floci silently failing to
-persist UserIdGroupPairs on usms-db-sg's rule, or a real-AWS scenario where the security
-group is declared perfectly correctly but some other layer (like an OS-level firewall on the
-instance itself, or a NACL denying the same traffic first) blocks it anyway. The verify
-script only checks the security group's own declared configuration in isolation — it has no
-way to know whether that configuration actually produces the intended behavior once real
-traffic (or in Floci's case, no traffic at all) is involved. -->

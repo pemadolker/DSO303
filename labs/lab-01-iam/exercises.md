@@ -116,7 +116,7 @@ This exercise helped to understand the difference between the ARN of bucket vs o
 
 ### Objective
 Create a role usms-analytics-partner-role that is assumed by the usms-audit-01 identity for up to 30
-minutes in each session with the scope of `arn:aws:s
+minutes in each session, with read access limited to `arn:aws:s3:::usms-student-data/reports/*` and nothing else.
 
 ### Design Reasoning and a Real Constraint Encountered
 The first attempt set `--max-session-duration 1800` directly on the role, which **failed**:
@@ -245,38 +245,76 @@ every statement.
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadSourceBucketObjects",
+      "Sid": "ListAndReadSourceBucket",
       "Effect": "Allow",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::usms-student-data/*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::usms-student-data",
+        "arn:aws:s3:::usms-student-data/*"
+      ],
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
+      }
     },
     {
       "Sid": "WriteAndVerifyArchiveBucket",
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject", "s3:GetObjectAttributes"],
-      "Resource": "arn:aws:s3:::usms-archive/*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      "Action": [
+        "s3:ListBucket",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:GetObjectAttributes"
+      ],
+      "Resource": [
+        "arn:aws:s3:::usms-archive",
+        "arn:aws:s3:::usms-archive/*"
+      ],
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
+      }
     },
     {
       "Sid": "WriteCompletionLog",
       "Effect": "Allow",
-      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
       "Resource": "arn:aws:logs:us-east-1:000000000000:log-group:/usms/backup-operator:*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
+      }
     },
     {
       "Sid": "DenyDeleteAnywhere",
       "Effect": "Deny",
-      "Action": "s3:DeleteObject",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:DeleteBucket"
+      ],
       "Resource": [
+        "arn:aws:s3:::usms-student-data",
         "arn:aws:s3:::usms-student-data/*",
+        "arn:aws:s3:::usms-archive",
         "arn:aws:s3:::usms-archive/*"
       ]
     }
   ]
 }
 ```
+
+**Revision after review.** The first version allowed only `s3:GetObject` on the source objects,
+but "copy *every* object" means the job must first enumerate the bucket, which is `s3:ListBucket`
+on the **bucket** ARN (the Step 23 bucket-vs-object distinction again). Verifying the archive the
+same way also needs `s3:ListBucket` on `usms-archive`. The deny statement originally covered only
+`s3:DeleteObject`; "never delete anything" also has to cover `s3:DeleteObjectVersion` (deleting a
+specific version of an object in a versioned bucket) and `s3:DeleteBucket`. Each statement now
+lists both the bucket ARN and the object ARN where its actions need them.
 
 Exactly 4 statements. No `Action: "*"` or `Resource: "*"` on any `Allow` statement. The final
 `Deny` statement is deliberate **defense-in-depth**: nothing in the first three statements
@@ -292,14 +330,14 @@ Role `usms-backup-operator-role` was created (trust: `lambda.amazonaws.com`), an
 
 **Role creation and attachment:**
 ![get-role showing the lambda.amazonaws.com trust principal, and list-attached-role-policies confirming USMSBackupOperator is attached](../../screenshots/lab1/ex4-backup-operator-role-creation.png)
-<!-- 
+
 ### Three Ways This Policy Could Still Be Abused
 
 | # | Abuse vector | Fix |
 |---|---|---|
 | 1 | No object-key restriction on the archive bucket — `PutObject` is allowed on **any** key under `usms-archive/*`, not just a backup-specific prefix. A compromised job could overwrite unrelated archive files. | Scope `Resource` to a specific prefix, e.g. `arn:aws:s3:::usms-archive/nightly/*`, if that is the only path the job legitimately writes to. |
 | 2 | No integrity/checksum enforcement — "verify" here only means "can read it back," not "matches a hash." A buggy job could silently write corrupted data and still pass its own check. | This is primarily an application-layer fix (the Lambda code should compare checksums/ETags), though the policy could additionally require server-side encryption headers via a `Condition` as a partial mitigation. |
-| 3 | The trust policy allows **any** Lambda function in the account to assume this role, not just the intended backup function. | Add a `Condition` on the trust policy using `aws:SourceArn`, scoped to the specific backup Lambda function's ARN. | -->
+| 3 | The trust policy allows **any** Lambda function in the account to assume this role, not just the intended backup function. | Add a `Condition` on the trust policy using `aws:SourceArn`, scoped to the specific backup Lambda function's ARN. |
 
 ### Reflection
 This was the hardest exercise, as it was necessary to translate the casual job description

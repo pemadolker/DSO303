@@ -19,7 +19,7 @@ ECS, CloudWatch and CloudWatch Logs answered the Step 3 probe. All three `applic
 
 - Step 2 verifiers for Labs 02 and 03 did not reach FAIL=0. These are documented in my Lab 02 and Lab 03 notes and are unchanged by this lab.
 - Step 9, revision 1 was registered with an empty `executionRoleArn`: `$EXEC_ROLE_ARN` was empty when I wrote the template, and my own template still shows `"executionRoleArn": ""`. The `grep -c '\$'` check printed 0 and the "roles are DIFFERENT" verifier check passed, because neither can detect an empty value. On real AWS the task could not have pulled its image or opened its log stream. Revision 2 sets the role explicitly and is the revision the service runs. Lesson: check the registered value, not just that the command succeeded.
-- Final verifier: **PASS=36 FAIL=2**, both documented as benign: the missing security group source (limitation 2), and the `outputs/.gitkeep` match in the git check.
+- Final verifier: **PASS=36 FAIL=1**, documented as benign: the missing security group source (limitation 2). The git-hygiene check originally also flagged `outputs/.gitkeep`, because it rejected *every* tracked file under `outputs/`, including the one file Lab 01 requires to be tracked. The check now allows exactly `outputs/.gitkeep` and still fails on anything else.
 
 ---
 

@@ -6,7 +6,6 @@
 **Date:** 20/8/26   
 
 
-
 ## 1. Aim / Objective
 
 
@@ -14,7 +13,6 @@ The aim of this lab was to understand AWS Identity and Access Management through
 
 
 By the end of this lab we should be able to create users, groups and roles in IAM, create and assign policies, receive temporary credentials through STS and handle access keys without inadvertently commiting it to Git.
-
 
 
 ## 2. Introduction
@@ -32,8 +30,6 @@ There are four main building blocks of IAM:
 
 IAM is considered the foundational security layer of any AWS account: no
 other AWS service can be used safely  without  designing underlying IAM structure correctly. Every single access decision made by AWS obeys two fundamental principles: **default deny** -  nothing is allowed unless explicitly allowed and  **explicit deny** always wins - nothing is allowed if explicitly denied. The latter is the principle behind creating a guardrail which cannot be accidentally bypassed in the future.
-
-
 
 
 ## 3. Use Case
@@ -55,39 +51,10 @@ Management System (USMS)**  that has three humans and three service roles:
 This reflects how real-life organizations operate - people are segmented based on their job functions **group** and not given individual policies, while servers run on **roles** instead of access keys saved on the disks.
 
 
-
 ## 4. System Architecture / Design
 
 All this comes under one IAM account (that is, the fictitious account created by Floci, 000000000000). There are three groups that each have one user and one or more policies each. The three roles are distinct - two of the roles are assumed by the AWS services EC2 and Lambda, while one role is assumed by the human user usms-dev-01 to elevate their permissions.
 
-<!-- ```
-                    ┌─────────────────────────────────────────┐
-                    │           IAM Account (Floci)            │
-                    │         Account ID: 000000000000          │
-                    └─────────────────────────────────────────┘
-                                       │
-        ┌──────────────────┬──────────────────────┬──────────────────────┐
-        │                  │                      │                      │
-   usms-admins        usms-developers        usms-auditors          (Roles)
-        │                  │                      │
-   usms-admin-01      usms-dev-01            usms-audit-01
-        │                  │                      │
-        └── USMSDeveloperBase (v3)            ReadOnlyAccess
-             │                                      │
-        USMSAssumeAppRoles                  USMSAssumeAnalyticsPartnerRole
-             │
-        [assumes] usms-developer-role  →  temporary creds (ASIA..., 1hr)
-
-   ┌────────────────────────┐    ┌──────────────────────────┐
-   │   usms-ec2-app-role     │    │  usms-lambda-exec-role    │
-   │   trust: ec2.amazonaws  │    │  trust: lambda.amazonaws  │
-   │   .com                  │    │  .com                     │
-   │   perms: S3 RW on       │    │  perms: logs write +      │
-   │   usms-student-data     │    │  S3 read on student-data  │
-   │   wrapped in:           │    └──────────────────────────┘
-   │   usms-ec2-app-profile  │
-   └────────────────────────┘
-``` -->
 
 ## 4.1 IAM Concepts Quick Reference
 
@@ -130,10 +97,9 @@ intended caller (or vice versa).
 
 **Part A -Setting up the environment.**
 
-Before even considering starting work with IAM, I needed to set up the proper working AWS environment locally. First, I made a project folder structure (policies/, configs/, scripts/, outputs/), added .gitignore file and ran git init before creating any files that might contain sensitive information, and proved that ignoring works as I wanted it to by committing a test secret file and then verifying that it does not appear in git status.
+Before even considering starting work with IAM, I needed to set up the proper working AWS environment locally. First, I made a project folder structure (policies/, configs/, scripts/, outputs/), added .gitignore file and ran git init before creating any files that might contain sensitive information, and proved that ignoring works as I wanted it to by writing a test secret file into `outputs/` and verifying that it does not appear in `git status`.
  
 Floci runs with Docker Compose, and not with the `floci start` command, since the latter does not activate durable storage mode by default and its state is stored in RAM. I activated that mode in docker-compose.yml by setting FLOCI_STORAGE_MODE=hybrid and a bind mount in the container (~/floci-data) and created simple floci-up.sh / floci-down.sh scripts that allow me to run up and shut down the floci container without having to remember the flag every time.
-
 
 
 Then I had to prove two different facts, not interchangeable: that my commands never hit the real AWS (the account ID is the dummy `000000000000`, --debug option showed me that every request is being sent to localhost:4566), and that the data is indeed persistent between the reboots (created a test IAM user, restarted the container, and the user was still there after that). 
@@ -153,7 +119,6 @@ Next, I made a second copy of the `USMSDeveloperBase` stack that gives additiona
 
 
 I executed `sts assume-role`, looked at the temporary credentials returned by it (an ASIA-prefixed key, a session token, and an expiry time of one hour), used the credentials temporarily, and reverted to my regular identity. Last I generated an actual access key for `usms-dev-01`, redirected it to `outputs/`, which means it will not get displayed anywhere, set the permissions on it to 600, and verified via git check-ignore that it is not accidentally included in any commits.
-
 
 
 ## 6. Results and Evidence
@@ -308,10 +273,10 @@ which works for any Floci version due to all persistent state residing in one di
 Here is the whole 34 checks script for verification of environment health, persistence configuration, all groups/users/policies/roles, and Git secret cleanliness – all succeeded in one run after the main lab completion.
 
 
-
 ### 6.2 AWS Management Console Verification
 
- 
+Not applicable: Floci has no Management Console. Every result in this report was verified from the CLI instead, by reading each object back after creating it (Section 6.1).
+
 ### 6.3 Floci vs. Real AWS
  
 Most things behaved exactly like real AWS - same commands, same JSON, same
@@ -344,7 +309,6 @@ The second real error occurred while executing one of the independent exercises:
 
 
 **Observations.**  The most important practical takeaway is the difference between the **trust policy** and the **permissions policy** for a role. Both should separately allow the operation in question, meaning that the role should trust the caller **and** the caller should have permissions to call sts:AssumeRole for the assumption to be possible. The double handshake aspect can easily be overlooked from a conceptual point of view but it is easy to check once it is clear. The same applies to auditing the permissions of a single user since there are three separate API calls that should be made.
-
 
 
 ## 8. Reflection

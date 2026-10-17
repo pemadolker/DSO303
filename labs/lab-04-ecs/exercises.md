@@ -67,7 +67,6 @@ The final inventory showed:
 | `usms-results-svc` | 1 | 1 | `usms-enrolment:2` | SEPARATE | OK |
 
 I also ran the script from my home directory to confirm that it works from a different working directory.
-sorry but can you sa
 ![alt text](../../screenshots/lab-04/e3.png)
 
 ![alt text](../../screenshots/lab-04/E3.png)
@@ -161,12 +160,11 @@ The final verification was run using:
 
 `./scripts/utilities/verify-lab-04.sh`
 
-The verifier reported two failures, but both are known benign issues caused by Floci:
+The verifier reported **PASS=36 FAIL=1**. The one failure is a known benign Floci issue:
 
-1. **Security-group source reference:** Floci did not retain the `UserIdGroupPairs` reference for the intended `usms-app-sg` source. The TCP/80 rule exists, but its source group reference cannot be recovered from Floci.
-2. **Git secret check:** the verifier reports the tracked `outputs/.gitkeep` file even though it is intentionally required to keep the outputs directory.
+- **Security-group source reference:** Floci did not retain the `UserIdGroupPairs` reference for the intended `usms-app-sg` source. The TCP/80 rule exists, but its source group reference cannot be recovered from Floci.
 
-Therefore, these are documented Floci/lab-repository limitations rather than resources that should be deleted to force the verifier to pass.
+This is a documented Floci limitation, not a resource that should be deleted and recreated to force the verifier to pass. (The git-hygiene check used to also flag `outputs/.gitkeep`, because it rejected every tracked file under `outputs/`. It now allows exactly that one file, which Lab 01 requires to be tracked, and still fails on anything else.)
 
 ![alt text](../../screenshots/lab-04/verifyscript.png)
 
