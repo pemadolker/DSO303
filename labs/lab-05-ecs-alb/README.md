@@ -4,7 +4,8 @@
 **Environment:** Floci (AWS-compatible emulator, hybrid storage), account `000000000000`, `us-east-1`.
 Original run on Floci **1.5.34**; upgraded to **2.2.0** on 15 Oct 2026 (see section 14).
 
-**Support path (Step 3):** A for the control plane, B for the data path (see Step 12).
+**Support path (Step 3):** B - control plane only. The probe answered for everything, but Step 12's curl
+could not connect, which is the handout's definition of Path B (see Step 12).
 Per-step reasoning and evidence: `notes/lab-05-notes.md`. Exercises: `labs/lab-05-ecs-alb/exercises.md`.
 
 > Labels used below:
@@ -37,7 +38,8 @@ Step 3 probe of the load balancer API:
 
 ![Step 3 - ELBv2 and ECS probe](../../screenshots/lab5/step3.png)
 
-**Observed:** every probe answered `SUPPORTED`, so the control plane is Path A.
+**Observed:** every probe answered `SUPPORTED`, which on its own points at Path A. Step 12 settled it as
+Path B.
 
 ## 3. Load balancer firewall (Step 4)
 
@@ -143,7 +145,8 @@ data path. `healthy` is a control-plane fact, not proof of a served request.
 Instead the five-block chain in `outputs/lab-05-path-proof.txt` shows: listener -> target group ->
 registered targets -> the service that registered them -> the firewall rule. The targets are flagged "not in
 a Lab 02 private subnet" only because Floci runs tasks on its own Docker network (`172.21.0.0/16`).
-**Floci limitation:** control plane Path A, data path Path B.
+**Floci limitation:** this is Path B as the handout defines it: every object exists and reads back, but
+no request is served.
 
 ## 11. Cutover and rolling deployment (Steps 13 and 14)
 
