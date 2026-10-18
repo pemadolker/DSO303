@@ -1,9 +1,0 @@
-{
-  "AdjustmentType": "ChangeInCapacity",
-  "MetricAggregationType": "Average",
-  "Cooldown": 60,
-  "StepAdjustments": [
-    { "MetricIntervalLowerBound": 0, "MetricIntervalUpperBound": 100, "ScalingAdjustment": 1 },
-    { "MetricIntervalLowerBound": 100, "ScalingAdjustment": 3 }
-  ]
-}
