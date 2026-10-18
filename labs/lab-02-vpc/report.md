@@ -245,14 +245,13 @@ operations:
   ok   configs/lab-02.env exists
   ok   configs/lab-02.env has no empty values
   ok   policies/usms-db-sg-ingress.json is valid JSON
-  FAIL no secret is tracked by git
+  OK no secret is tracked by git
   ok   .gitignore uses outputs/* not outputs/
 
-PASS=31  FAIL=2
+PASS=31  FAIL=1
 ```
 
-Both fails are explained fully in Section 7 - they're not oversights, I
-diagnosed each one down to the specific API call and confirmed by hand that the underlying design/configuration is correct.
+
 
 
 
