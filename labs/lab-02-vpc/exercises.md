@@ -1,12 +1,10 @@
 # Lab 02 - Independent Exercises
 
 
-
 All exercises below were done on top of the verified core build (Steps 1–25,
-`verify-lab-02.sh` passing 31/32, the 2 remaining fails being documented Floci
-limitations, not mistakes on my part — see `notes/lab-02-notes.md` and the
+`verify-lab-02.sh` at `PASS=32 FAIL=1`, the one remaining failure being a documented
+Floci limitation, not a mistake on my part — see `notes/lab-02-notes.md` and the
 main report for details).
-
 
 ## Exercise 1 - Basic: a third public subnet
 
@@ -419,7 +417,7 @@ grep -n 'export .*=$\|None' configs/lab-02.env || echo "all values populated"
 
 ```bash
 ./scripts/utilities/verify-lab-02.sh
-# PASS=31  FAIL=2
+# PASS=32  FAIL=1
 ```
 
-There are 2 more failures that appear in the form of Floci limitations mentioned in the core build (`usms-db-sg` group not being saved and `.gitkeep` false positive from the validation script.)
+The one remaining failure is the documented Floci limitation: `usms-db-sg`'s source group is not returned by `describe-security-groups`. 
