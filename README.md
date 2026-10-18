@@ -47,6 +47,9 @@ real AWS would have done instead.
 ## Conventions
 
 - All resources are prefixed `usms-`
-- Region: `us-east-1`  ·  Floci account: `000000000000`
+- Region - `us-east-1`  ·  Floci account: `000000000000`
 - Storage mode: `hybrid`, bind-mounted to `~/floci-data`
 - Secrets live in `outputs/` and are **never** committed
+
+
+
