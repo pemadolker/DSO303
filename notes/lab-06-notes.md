@@ -255,3 +255,143 @@ All three "not benign" checks pass: no suspension switch left true, desiredCount
 of 2, MinCapacity 2. The managed alarms, the alarm -> step policy link and the custom metric (all listed
 as possibly benign) also pass on this build.
 
+
+## Review questions
+
+### 1. From one click to one new task
+
+The nine lines from Step 15:
+
+1. A student clicks Register and the requests per target go past 1000, or the work queue goes past 100.
+2. An alarm fires and calls a policy.
+3. The policy writes a new desiredCount, kept between 2 and 10.
+4. ECS starts a task from usms-enrolment:2.
+5. The task gets a network interface in usms-private-subnet-a or -b, with no public address.
+6. usms-enrolment-sg lets in tcp/80 only from usms-alb-sg.
+7. The service registers the task's address in usms-enrolment-tg.
+8. The load balancer health checks it, and after the 60 s grace period it gets traffic.
+9. Nothing about the task definition, the service or the load balancer changed.
+
+This lab owns lines 1 to 3: the alarms, the policies, and the scalable target with its bounds. The other six needed no change because ECS already knew how to start a task to match desiredCount, the subnets and security groups already accepted any task of that service, and the service already registered every task it started in the target group. Labs 04 and 05 built a system that follows one number, and this lab only adds something that changes that number.
+
+My one sentence answer: auto scaling does not change my application at all, it only changes how many copies of it are running.
+
+### 2. Why the full ARN is rejected
+
+The resource ID is not an ARN. It is a short string that Application Auto Scaling builds itself to name the thing it scales, and for ECS it is `service/<cluster>/<service>`, which is the last part of the service ARN after the last colon. Application Auto Scaling works with many services, and each one names its resources differently, so it uses its own format for every namespace instead of ARNs. For DynamoDB it is `table/<table-name>` (or `table/<table>/index/<index>`), and for Lambda it is `function:<function-name>:<alias>`, so the colons and slashes are different in each one. Passing the full ARN fails validation because it does not match the pattern for the ecs namespace.
+
+The other constructed identifiers in this lab are the ResourceLabel for ALBRequestCountPerTarget, built from the load balancer ARN (everything after `loadbalancer/`) joined with the target group ARN (everything after the last colon), and the managed alarm names, which start with `TargetTracking-` plus the resource ID. In Step 14 the resource ID itself was rebuilt from the service ARN with `${SVC_ARN##*:}`.
+
+### 3. Registering a floor above the current count
+
+The object that makes the change is the scalable target registration, carried out by Application Auto Scaling using the service-linked role. It is different from a policy because no alarm and no metric is involved, there is no cooldown, and it happens straight away. The scaling activity it leaves says the cause was the minimum capacity, not an alarm. On Floci this did not happen at all (Step 6, Exercises 3 and 5), so this part is reasoned.
+
+A 3 a.m. example: the enrolment service is slow, the on-call engineer cannot find the cause yet, and the reactive policies keep scaling in and out. To stop the flapping and buy time, they run register-scalable-target with a minimum of 6. The count goes to 6 at once and cannot drop below it. The person who takes over at 8 can see the evidence in three places: describe-scalable-targets shows MinCapacity 6, which disagrees with configs/lab-04.env; describe-scaling-activities shows the jump to 6 with a cause that is not an alarm; and on real AWS, CloudTrail shows the RegisterScalableTarget call with the engineer's identity and time. The engineer should also write it down in the incident notes, because the floor stays at 6 until someone puts it back, and the service costs more the whole time.
+
+### 4. Managed alarms against my own alarm
+
+The two TargetTracking alarms belong to AWS. They are created when the policy is created, they are changed when the policy changes (for example a new target value), and they are deleted when the policy is deleted. If someone deletes one by hand, the policy silently loses that direction, so with AlarmLow gone it never scales in again, and nothing warns you. usms-enrolment-queue-high belongs to me. Nothing creates, updates or deletes it for me: if I delete the step policy, the alarm stays and points at an ARN that no longer exists, and the cleanup script has to delete it on purpose. What my alarm can do that the managed ones cannot: I choose the metric, the period, the number of evaluation periods, the threshold and the missing data treatment, and I can watch any metric, including a custom one. The managed ones can follow a target value automatically and keep a scale in alarm that is slower than the scale out alarm without me doing anything.
+
+The case for `breaching` on the queue alarm: if the thing that publishes the queue depth stops, that probably means something is wrong, and the safe guess is that the queue is building up while nobody reports it. Treating missing data as breaching makes the service scale out, which is the safer mistake during enrolment. What goes wrong if I am right: when the publisher breaks for a boring reason, like a bad deploy of the reporting job, the alarm stays in ALARM and keeps calling the policy until the service is at the maximum of 10. On Floci I saw how fast that happens in Step 12. The service then costs five times more for no reason, and the real problem, the broken metric, is hidden behind what looks like busy traffic.
+
+### 5. Why reactive scaling is always late
+
+The delays, in order:
+
+1. The metric is published once a minute (Container Insights for CPU, the load balancer for requests), so up to 60 s pass before the first high value even exists.
+2. The AlarmHigh needs 3 breaching periods of 60 s, so 180 s. This is set by AWS for target tracking; for my own alarm it is the evaluation periods I chose.
+3. The policy runs and writes desiredCount within seconds.
+4. ECS places the task, and Fargate needs about 20 to 60 s to start it and pull the image.
+5. The service waits for the health check grace period of 60 s (Lab 05, set on the service), and the target group needs its healthy checks (Lab 05, interval 30 s) before it sends traffic.
+
+That adds up to roughly 4 to 6 minutes from the first busy request to new capacity serving users. During that time the tasks that were already running take the whole load.
+
+The three consequences: the minimum capacity is a latency decision, because the floor is what absorbs the first minutes, which is why the floor is 2 (one task per AZ) and not 1. Scale out quickly and scale in slowly, which is why ScaleOutCooldown is 60 and ScaleInCooldown is 300. And for a spike you know is coming, only scheduled scaling can be early, which is why Step 11 adds the weekday morning action at 07:45, before the office opens.
+
+### 6. When two policies disagree
+
+If either policy wants to scale out, Application Auto Scaling scales out to the larger of the two answers. It only scales in when every policy that has scale in enabled agrees. So if CPU is at 30% but requests per target are at 1500, the service scales out, and if CPU is at 70% but requests are low, it still scales out. It only shrinks when both are under their targets. The rule is asymmetric because the two mistakes do not cost the same. Too few tasks means students get errors, and too many tasks only means some extra money for a while.
+
+Two target tracking policies on the same metric are a fault because they can never both be satisfied. With CPU targets of 40 and 60, the service is pushed to 40 by one policy, and the other one, sitting below its 60, keeps asking to scale in but is overruled, so the second policy does nothing except add alarms and confusion. A step policy and a target tracking policy on one metric is the same mistake in a worse form, as I wrote in Exercise 2: the step policy adds a fixed number of tasks, CPU drops far below the target, target tracking removes tasks, CPU goes back up and the step policy fires again, so the service keeps going up and down.
+
+### 7. Requests per target or CPU
+
+Three reasons ALBRequestCountPerTarget is better for the enrolment API:
+
+1. It measures demand directly. A student pressing Register is a request, and requests are what the users feel. CPU is only a side effect that also moves for other reasons, like garbage collection or a new task starting up.
+2. It scales in a straight line. If the number of tasks doubles, the requests per task halve, so target tracking can work out the right count in one step. CPU stops at 100%, so it cannot show how far past capacity the service is, and in Exercise 4 that is why CPU can only double the count each step.
+3. It comes from the load balancer and does not depend on Container Insights, which Floci did not even store in Lab 04.
+
+CPU is better for work without a load balancer or where each unit of work costs very different amounts, for example a worker that generates reports or processes uploaded transcripts, where one job can be 100 times heavier than another.
+
+For requests per target to scale this service badly, the requests would have to stop being equal. If a few students upload large transcripts or run heavy reports, CPU can be at 100% while the request count stays under 1000, so nothing scales out and the service gets slow. It is also bad when the real bottleneck is the database, because more tasks only send more queries to usms-db-01. The metric that would have warned me is the load balancer's TargetResponseTime (and HTTPCode_Target_5XX_Count) rising while RequestCountPerTarget is still below the target, or simply CPU being high while requests are low.
+
+## Review questions
+
+### 1. From one click to one new task
+
+The nine lines from Step 15:
+
+1. A student clicks Register and the requests per target go past 1000, or the work queue goes past 100.
+2. An alarm fires and calls a policy.
+3. The policy writes a new desiredCount, kept between 2 and 10.
+4. ECS starts a task from usms-enrolment:2.
+5. The task gets a network interface in usms-private-subnet-a or -b, with no public address.
+6. usms-enrolment-sg lets in tcp/80 only from usms-alb-sg.
+7. The service registers the task's address in usms-enrolment-tg.
+8. The load balancer health checks it, and after the 60 s grace period it gets traffic.
+9. Nothing about the task definition, the service or the load balancer changed.
+
+This lab owns lines 1 to 3: the alarms, the policies, and the scalable target with its bounds. The other six needed no change because ECS already knew how to start a task to match desiredCount, the subnets and security groups already accepted any task of that service, and the service already registered every task it started in the target group. Labs 04 and 05 built a system that follows one number, and this lab only adds something that changes that number.
+
+My one sentence answer: auto scaling does not change my application at all, it only changes how many copies of it are running.
+
+### 2. Why the full ARN is rejected
+
+The resource ID is not an ARN. It is a short string that Application Auto Scaling builds itself to name the thing it scales, and for ECS it is `service/<cluster>/<service>`, which is the last part of the service ARN after the last colon. Application Auto Scaling works with many services, and each one names its resources differently, so it uses its own format for every namespace instead of ARNs. For DynamoDB it is `table/<table-name>` (or `table/<table>/index/<index>`), and for Lambda it is `function:<function-name>:<alias>`, so the colons and slashes are different in each one. Passing the full ARN fails validation because it does not match the pattern for the ecs namespace.
+
+The other constructed identifiers in this lab are the ResourceLabel for ALBRequestCountPerTarget, built from the load balancer ARN (everything after `loadbalancer/`) joined with the target group ARN (everything after the last colon), and the managed alarm names, which start with `TargetTracking-` plus the resource ID. In Step 14 the resource ID itself was rebuilt from the service ARN with `${SVC_ARN##*:}`.
+
+### 3. Registering a floor above the current count
+
+The object that makes the change is the scalable target registration, carried out by Application Auto Scaling using the service-linked role. It is different from a policy because no alarm and no metric is involved, there is no cooldown, and it happens straight away. The scaling activity it leaves says the cause was the minimum capacity, not an alarm. On Floci this did not happen at all (Step 6, Exercises 3 and 5), so this part is reasoned.
+
+A 3 a.m. example: the enrolment service is slow, the on-call engineer cannot find the cause yet, and the reactive policies keep scaling in and out. To stop the flapping and buy time, they run register-scalable-target with a minimum of 6. The count goes to 6 at once and cannot drop below it. The person who takes over at 8 can see the evidence in three places: describe-scalable-targets shows MinCapacity 6, which disagrees with configs/lab-04.env; describe-scaling-activities shows the jump to 6 with a cause that is not an alarm; and on real AWS, CloudTrail shows the RegisterScalableTarget call with the engineer's identity and time. The engineer should also write it down in the incident notes, because the floor stays at 6 until someone puts it back, and the service costs more the whole time.
+
+### 4. Managed alarms against my own alarm
+
+The two TargetTracking alarms belong to AWS. They are created when the policy is created, they are changed when the policy changes (for example a new target value), and they are deleted when the policy is deleted. If someone deletes one by hand, the policy silently loses that direction, so with AlarmLow gone it never scales in again, and nothing warns you. usms-enrolment-queue-high belongs to me. Nothing creates, updates or deletes it for me: if I delete the step policy, the alarm stays and points at an ARN that no longer exists, and the cleanup script has to delete it on purpose. What my alarm can do that the managed ones cannot: I choose the metric, the period, the number of evaluation periods, the threshold and the missing data treatment, and I can watch any metric, including a custom one. The managed ones can follow a target value automatically and keep a scale in alarm that is slower than the scale out alarm without me doing anything.
+
+The case for `breaching` on the queue alarm: if the thing that publishes the queue depth stops, that probably means something is wrong, and the safe guess is that the queue is building up while nobody reports it. Treating missing data as breaching makes the service scale out, which is the safer mistake during enrolment. What goes wrong if I am right: when the publisher breaks for a boring reason, like a bad deploy of the reporting job, the alarm stays in ALARM and keeps calling the policy until the service is at the maximum of 10. On Floci I saw how fast that happens in Step 12. The service then costs five times more for no reason, and the real problem, the broken metric, is hidden behind what looks like busy traffic.
+
+### 5. Why reactive scaling is always late
+
+The delays, in order:
+
+1. The metric is published once a minute (Container Insights for CPU, the load balancer for requests), so up to 60 s pass before the first high value even exists.
+2. The AlarmHigh needs 3 breaching periods of 60 s, so 180 s. This is set by AWS for target tracking; for my own alarm it is the evaluation periods I chose.
+3. The policy runs and writes desiredCount within seconds.
+4. ECS places the task, and Fargate needs about 20 to 60 s to start it and pull the image.
+5. The service waits for the health check grace period of 60 s (Lab 05, set on the service), and the target group needs its healthy checks (Lab 05, interval 30 s) before it sends traffic.
+
+That adds up to roughly 4 to 6 minutes from the first busy request to new capacity serving users. During that time the tasks that were already running take the whole load.
+
+The three consequences: the minimum capacity is a latency decision, because the floor is what absorbs the first minutes, which is why the floor is 2 (one task per AZ) and not 1. Scale out quickly and scale in slowly, which is why ScaleOutCooldown is 60 and ScaleInCooldown is 300. And for a spike you know is coming, only scheduled scaling can be early, which is why Step 11 adds the weekday morning action at 07:45, before the office opens.
+
+### 6. When two policies disagree
+
+If either policy wants to scale out, Application Auto Scaling scales out to the larger of the two answers. It only scales in when every policy that has scale in enabled agrees. So if CPU is at 30% but requests per target are at 1500, the service scales out, and if CPU is at 70% but requests are low, it still scales out. It only shrinks when both are under their targets. The rule is asymmetric because the two mistakes do not cost the same. Too few tasks means students get errors, and too many tasks only means some extra money for a while.
+
+Two target tracking policies on the same metric are a fault because they can never both be satisfied. With CPU targets of 40 and 60, the service is pushed to 40 by one policy, and the other one, sitting below its 60, keeps asking to scale in but is overruled, so the second policy does nothing except add alarms and confusion. A step policy and a target tracking policy on one metric is the same mistake in a worse form, as I wrote in Exercise 2: the step policy adds a fixed number of tasks, CPU drops far below the target, target tracking removes tasks, CPU goes back up and the step policy fires again, so the service keeps going up and down.
+
+### 7. Requests per target or CPU
+
+Three reasons ALBRequestCountPerTarget is better for the enrolment API:
+
+1. It measures demand directly. A student pressing Register is a request, and requests are what the users feel. CPU is only a side effect that also moves for other reasons, like garbage collection or a new task starting up.
+2. It scales in a straight line. If the number of tasks doubles, the requests per task halve, so target tracking can work out the right count in one step. CPU stops at 100%, so it cannot show how far past capacity the service is, and in Exercise 4 that is why CPU can only double the count each step.
+3. It comes from the load balancer and does not depend on Container Insights, which Floci did not even store in Lab 04.
+
+CPU is better for work without a load balancer or where each unit of work costs very different amounts, for example a worker that generates reports or processes uploaded transcripts, where one job can be 100 times heavier than another.
+
+For requests per target to scale this service badly, the requests would have to stop being equal. If a few students upload large transcripts or run heavy reports, CPU can be at 100% while the request count stays under 1000, so nothing scales out and the service gets slow. It is also bad when the real bottleneck is the database, because more tasks only send more queries to usms-db-01. The metric that would have warned me is the load balancer's TargetResponseTime (and HTTPCode_Target_5XX_Count) rising while RequestCountPerTarget is still below the target, or simply CPU being high while requests are low.
