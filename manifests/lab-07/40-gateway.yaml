@@ -18,13 +18,19 @@ data:
 
       location = / {
         add_header Content-Type application/json;
-        return 200 '{"service":"usms-gateway","pod":"${POD_NAME}","routes":["/enrolment/","/results/"]}\n';
+        return 200 '{"service":"usms-gateway","pod":"${POD_NAME}","routes":["/enrolment/","/results/","/timetable/"]}\n';
       }
 
       location /enrolment/ {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_pass http://usms-enrolment.usms.svc.cluster.local/;
+      }
+
+      location /timetable/ {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://usms-timetable.usms.svc.cluster.local/;
       }
 
       location /results/ {
