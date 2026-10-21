@@ -6,7 +6,7 @@ metadata:
   labels:
     app: usms-enrolment
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: usms-enrolment

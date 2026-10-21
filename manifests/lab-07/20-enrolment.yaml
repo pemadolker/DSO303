@@ -49,6 +49,8 @@ spec:
         project: usms
         tier: app
     spec:
+      nodeSelector:
+        workload: usms
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

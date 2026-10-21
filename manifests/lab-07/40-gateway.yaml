@@ -1,3 +1,6 @@
+# The usms-gateway Service moved to manifests/lab-08/50-service-loadbalancer.yaml
+# in Lab 08 Step 15 (type LoadBalancer). It is not repeated here so the two files
+# cannot fight over the same object.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,7 +53,7 @@ metadata:
     project: usms
     tier: web
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 5
   selector:
     matchLabels:
@@ -96,19 +99,3 @@ spec:
         - name: conf
           configMap:
             name: usms-gateway-conf
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: usms-gateway
-  namespace: usms
-  labels:
-    app: usms-gateway
-spec:
-  type: ClusterIP
-  selector:
-    app: usms-gateway
-  ports:
-    - name: http
-      port: 80
-      targetPort: http

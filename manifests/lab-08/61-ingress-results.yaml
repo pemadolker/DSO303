@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: usms-results-ingress
+  namespace: usms
+  labels:
+    app: usms-results
+    project: usms
+    lab: "08"
+  annotations:
+    # Real EKS with the AWS Load Balancer Controller. Inert locally.
+    # internal: the ALB goes in the PRIVATE subnets, reachable from the
+    # university network over its VPN / Direct Connect, not from the internet.
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/tags: Project=USMS,Tier=web,Lab=08,Owner=ExaminationsOffice
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /results
+            pathType: Prefix
+            backend:
+              service:
+                name: usms-results
+                port:
+                  number: 80
