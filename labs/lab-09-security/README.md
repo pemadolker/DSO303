@@ -273,4 +273,3 @@ The key ideas I am taking from this lab are that the HPA percentage is of the po
 - Screenshots: `screenshots/lab8/`
 - Kept locally and not committed (git-ignored): the baseline, node group before and after files, restart comparison, eviction body, and the two Exercise 5 files for Lab 10
 
-**Note on AI use:** I used Claude (an AI assistant) as a guide while doing this lab. I ran every command myself, and the screenshots are from my own terminal. The notes and this report were written with its help, and I read and checked them before committing.
