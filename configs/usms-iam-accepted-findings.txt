@@ -1,0 +1,6 @@
+# USMS IAM audit - accepted findings. Committed on purpose: every entry needs a reason,
+# otherwise this is just a suppression list. Format: role | text the finding contains | reason
+usms-ec2-app-role | service principal ec2.amazonaws.com with NO Condition | EC2 does not send aws:SourceArn for instance profiles, so a condition would lock the role out. Compensating controls: IMDSv2 required with hop limit 1 on usms-web-01 (Step 11), and USMSDeployBase explicitly denies passing any role to EC2 (Step 8).
+usms-eks-node-role | service principal ec2.amazonaws.com with NO Condition | Same EC2 reason. EKS is out of scope for this review (no IRSA on this build); to be revisited in an EKS audit. Compensating control: the node role is only usable by instances launched into the managed node group.
+usms-eks-cluster-role | service principal eks.amazonaws.com with NO Condition | EKS is out of scope for this review (Lab 09 Section 3). To be revisited in an EKS audit with aws:SourceArn pinned to the cluster ARN.
+AWSServiceRoleForEcsApplicationAutoscaling | service principal ecs.application-autoscaling.amazonaws.com with NO Condition | Service-linked role: AWS owns and locks its trust policy, it cannot be edited. Only the Application Auto Scaling service can use it.

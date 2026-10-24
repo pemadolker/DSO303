@@ -1,0 +1,26 @@
+[
+  {
+    "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+    "PrefixListIds": [ { "PrefixListId": "pl-63a5400a", "Description": "S3 through the Lab 02 gateway endpoint - Lab 10 transcripts" } ]
+  },
+  {
+    "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+    "IpRanges": [ { "CidrIp": "0.0.0.0/0", "Description": "HTTPS to AWS service endpoints, including STS for the instance profile credentials" } ]
+  },
+  {
+    "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80,
+    "UserIdGroupPairs": [ { "GroupId": "sg-d6a9f362a51555d9e", "Description": "The enrolment API - since Lab 05 that is the load balancer, not the tasks" } ]
+  },
+  {
+    "IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432,
+    "UserIdGroupPairs": [ { "GroupId": "sg-1ab4cbc60843d3564", "Description": "PostgreSQL to the data tier" } ]
+  },
+  {
+    "IpProtocol": "udp", "FromPort": 53, "ToPort": 53,
+    "IpRanges": [ { "CidrIp": "10.0.0.2/32", "Description": "DNS to the Amazon resolver (VPC base + 2) - UDP first" } ]
+  },
+  {
+    "IpProtocol": "tcp", "FromPort": 53, "ToPort": 53,
+    "IpRanges": [ { "CidrIp": "10.0.0.2/32", "Description": "DNS over TCP to the same resolver - fallback for large or truncated answers" } ]
+  }
+]
