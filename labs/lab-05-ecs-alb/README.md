@@ -255,4 +255,3 @@ The key ideas I am taking from this lab are that the load balancer gives clients
 - Screenshots: `screenshots/lab5/`
 - Kept locally and not committed (git-ignored): the service delete and recreate files, the path proof, the tasks before and after files and the restart captures
 
-**Note on AI use:** I used Claude (an AI assistant) as a guide while doing this lab. I ran every command myself, and the screenshots are from my own terminal. The notes and this report were written with its help, and I read and checked them before committing.
