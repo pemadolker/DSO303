@@ -57,6 +57,9 @@ The only new thing in this lab is the control loop on the right. Everything else
  put-metric-data -> USMS/Enrolment EnrolmentQueueDepth -> alarm usms-enrolment-queue-high (>= 100)
 ```
 
+![Lab 06 architecture](../../screenshots/lab6/lab-06-architecture.png)
+
+
 Data flow when the queue gets long: the metric goes above 100, the alarm goes to ALARM, the alarm calls the step policy, the policy writes a new desired count (clamped between 2 and 10), ECS starts the extra tasks in the private subnets and the service registers them in the target group.
 
 ## 5. Implementation Procedure

@@ -92,6 +92,10 @@ usms-vpc  10.0.0.0/16
 This is the actual, final state of the network as verified by
 `verify-lab-02.sh` - not a planned diagram, an as-built one.
 
+
+![alt text](../../screenshots/lab2/lab-02-architecture.png)
+
+
 ## 5. Implementation Procedure
 
 This was done using the AWS CLI against Floci (`localhost:4566`, account

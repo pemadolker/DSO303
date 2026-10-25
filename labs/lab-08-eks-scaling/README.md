@@ -68,6 +68,8 @@ This matters in cloud computing because paying for peak capacity all year is was
    usms-enrolment-alb -> usms-enrolment-tg (ip) -> ECS tasks, scalable target min 2 max 10, three policies
 ```
 
+![alt text](../../screenshots/lab8/lab-08-architecture.png)
+
 The HPA does only one thing: it writes a number into the Deployment. Everything else, like starting pods and adding them to the Service, is done by the normal Kubernetes controllers I saw in Lab 07.
 
 ## 5. Implementation Procedure

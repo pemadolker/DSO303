@@ -62,6 +62,8 @@ Kubernetes is important in cloud computing because it is the same everywhere, it
    usms-eks-node-role    -> USMSEKSNodePolicy, USMSStudentDataReadWrite (Lab 01)
 ```
 
+![alt text](../../screenshots/lab7/lab-07-architecture.png)
+
 The gateway's configuration holds service names and no IP addresses. CoreDNS turns a name into the Service's ClusterIP, and kube-proxy spreads the requests over the ready pods behind it.
 
 ## 5. Implementation Procedure

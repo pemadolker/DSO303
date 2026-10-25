@@ -55,6 +55,8 @@ This reflects how real-life organizations operate - people are segmented based o
 
 All this comes under one IAM account (that is, the fictitious account created by Floci, 000000000000). There are three groups that each have one user and one or more policies each. The three roles are distinct - two of the roles are assumed by the AWS services EC2 and Lambda, while one role is assumed by the human user usms-dev-01 to elevate their permissions.
 
+![Lab 01 architecture](../../screenshots/lab1/lab-01-architecture.png)
+
 
 ## 4.1 IAM Concepts Quick Reference
 

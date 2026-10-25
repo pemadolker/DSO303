@@ -1,13 +1,13 @@
-# AWS Practical Laboratory 8 Report
+# AWS Practical Laboratory 9 Report
 
-**Student Name:** Pema Dolker
-**Module:** DSO303
-**Practical:** Lab 08 - Scaling and Exposing the USMS Application on Amazon EKS
-**Environment:** Floci 2.2.0 (local AWS API emulator, Docker Compose, hybrid storage), account 000000000000, us-east-1, the k3s v1.30 cluster from Lab 07
+**Student Name:** Pema Dolker       
+**Module:** DSO303    
+**Practical:** Lab 09 - Securing the USMS Application with IAM Roles and Security Groups    
+**Environment:** Floci 2.2.0 (local AWS API emulator, Docker Compose, hybrid storage), account 000000000000, us-east-1
 
-**Support path:** A, with one gap. The eks API works and the cluster is real, so the Kubernetes half of the lab ran fully. The one thing that did not work on the AWS side is `update-nodegroup-config`, which Floci 2.2.0 does not have at all.
+**Support path:** A (full). Roles, policies and security group rules can be created, read and changed, and `simulate-principal-policy` also works, so I could check my own reading of the policies against the IAM simulator. Only `get-credential-report` is missing.
 
-Step by step notes are in `notes/lab-08-notes.md` and the five exercises are in `labs/lab-08-eks-scaling/exercises.md`.
+Step by step notes and the seven review questions are in `notes/lab-09-notes.md`, and the five exercises are in `labs/lab-09-security/exercises.md`.
 
 > Labels used below:
 > **Observed** = I ran it and saw it.
@@ -16,260 +16,241 @@ Step by step notes are in `notes/lab-08-notes.md` and the five exercises are in 
 
 ## 1. Aim / Objective
 
-The aim of this practical is to make the USMS application on EKS scale and to expose it outside the cluster. On the scaling side I scaled by hand and by manifest, looked at requests, limits and QoS classes, created a HorizontalPodAutoscaler and made it move with real load, tried to scale the node group from the AWS side, used a nodeSelector and added PodDisruptionBudgets. On the exposure side I climbed the ladder from ClusterIP and port-forward to NodePort, LoadBalancer and Ingress, and compared it all with the ECS, ALB and Application Auto Scaling setup from Labs 04 to 06, with both running at the same time.
+The aim of this practical is to review the security of everything Labs 1 to 6 built, on both sides of access control: who can call what (IAM), and what can reach what (security groups and routing). I inventoried and audited every role and security group with read-only scripts, then fixed what they found: a read-only transcripts policy, confused deputy conditions on trust policies, a scoped `iam:PassRole`, a permissions boundary, a session policy, an access key rotation and IMDSv2. On the network side I wrote egress rules for three groups, limited SSH to a bastion group, and showed that the database cannot be reached from the internet. Finally I proved that all of it survives a restart and that nothing from the earlier labs broke.
 
 ## 2. Introduction
 
-Lab 07 got USMS running on EKS. This lab is about the two things you need next in production: handling more load, and letting people reach it.
+Up to now the labs built USMS. This one reviews it. Nothing new is added to the application, the work is finding and fixing weaknesses in what is already there.
 
-Scaling in Kubernetes happens in four separate directions: more pods, bigger pods, more nodes and bigger nodes. Each one is owned by a different object. The HorizontalPodAutoscaler (HPA) adds and removes pods by changing a Deployment's replica count, based on CPU usage as a percentage of each pod's CPU request. Adding nodes is a different system on the AWS side (the node group), and nothing connects the two unless something like Cluster Autoscaler or Karpenter is installed.
+AWS decides every request on two separate axes. An API call is decided by IAM, and when it is refused you get an error that names an action. A network packet is decided by routing, security groups and NACLs, and when it is refused you get a timeout. Neither side knows about the other, and most confusing access problems come from assuming one side has already covered the other.
 
-Exposure also has levels. A ClusterIP Service only works inside the cluster, a NodePort opens a port on every node, a LoadBalancer Service asks the cloud for a load balancer, and an Ingress is a set of HTTP routing rules that an ingress controller turns into something real, which on EKS is an ALB.
+The main ideas I used in this lab:
 
-The main parts I used in this lab:
+- **Trust policy** - decides who may become a role. A service principal with no condition can be used by that service on anyone's behalf (the confused deputy).
+- **Least privilege** - giving a role only the actions it actually needs, for example a read-only policy for a service that only reads.
+- **iam:PassRole** - the permission to hand a role to a service. Unscoped, it is a common way to escalate to admin.
+- **Permissions boundary** - a ceiling on a role that grants nothing by itself.
+- **Session policy** - a ceiling the caller puts on one assumed role session.
+- **Access key rotation** - replacing a long-lived key with no outage.
+- **IMDSv2** - a token-based metadata service that stops SSRF bugs from stealing instance credentials.
+- **Egress rules** - limiting what a resource can connect out to, not only what can connect in.
 
-- **HorizontalPodAutoscaler (autoscaling/v2)** - min and max replicas, a CPU target, and a behavior block for how fast to scale up and down.
-- **metrics-server** - the add-on that gives the HPA and `kubectl top` their CPU numbers.
-- **Requests, limits and QoS classes** - what the scheduler reserves, what the kubelet enforces, and who gets evicted first.
-- **Managed node group scaling config** - min, max and desired number of nodes.
-- **nodeSelector** - a hard rule for which nodes a pod may run on.
-- **PodDisruptionBudget** - a limit on how many pods can be taken down on purpose at once.
-- **Service types and Ingress** - ClusterIP, NodePort, LoadBalancer, and HTTP path routing.
-
-This matters in cloud computing because paying for peak capacity all year is wasteful, and USMS is quiet for most of the year and very busy for about two months. Autoscaling and a single shared entry point keep it both available and cheap.
+Security matters in cloud computing because a cloud account is reachable from anywhere, and most real incidents come from configuration (a role that can do too much, a rule that is too open) rather than from clever exploits.
 
 ## 3. Use Case
 
-- Enrolment week, when traffic jumps suddenly and the service needs more pods within a minute, then goes back down slowly afterwards.
-- Node maintenance or upgrades, where pods must be moved off a node without the service ever going fully down.
-- Keeping some workloads on specific nodes, for example by a `workload=usms` label.
-- Giving one office (the Examinations Office) access to one path, like results, without exposing everything else and without paying for another load balancer.
-- Putting many small services behind one load balancer, instead of one load balancer per service.
+- Reviewing an existing system before an audit and producing a list of findings with decisions for each one.
+- Giving a reporting service read-only access to student transcripts without touching the services that need to write.
+- Letting a deployment pipeline pass only specific roles to ECS, with a ceiling it cannot raise.
+- Rotating a developer's access key without breaking anything that uses it.
+- Making sure a compromised task or instance cannot freely send data out of the network.
 
 ## 4. System Architecture / Design
 
 ```text
- SCALING
-   metrics-server --CPU--> usms-enrolment-hpa (min 2, max 8, 50% of 50m)  --writes replicas--> Deployment usms-enrolment
-                           usms-results-hpa   (min 2, max 6, 60%)          --writes replicas--> Deployment usms-results
-   AWS side: usms-eks-nodes (min 2, max 4, desired 2)   <-- nothing connects this to the HPAs
-   usms-enrolment: nodeSelector workload=usms, PDB maxUnavailable 1
-   usms-gateway:   2 replicas, PDB minAvailable 1
+ NETWORK (usms-vpc 10.0.0.0/16)
+   internet -> usms-alb-sg  in 80,443 from 0.0.0.0/0    out ONLY tcp/80 -> usms-enrolment-sg
+   internet -> usms-app-sg  in 80,443 from 0.0.0.0/0    in 22 ONLY from usms-bastion-sg
+                            out 443 (S3 list + anywhere), 80 -> alb-sg, 5432 -> db-sg, 53 -> 10.0.0.2
+   usms-enrolment-sg        in 80 from usms-alb-sg       out ONLY tcp/443 (S3 prefix list + anywhere)
+   usms-db-sg               in 5432 from app-sg (and exam-sg)   out ONLY tcp/443
+   usms-db-01: private subnet, no internet gateway route, custom NACL, metadata service off
+   usms-web-01: IMDSv2 required, hop limit 1
 
- EXPOSURE (each rung keeps the one below it)
-   ClusterIP     usms-enrolment, usms-results, usms-timetable        inside the cluster only
-   port-forward  kubectl -> API server -> one pod                    debugging only
-   NodePort      usms-results-np  80:30080 on the node
-   LoadBalancer  usms-gateway  clusterIP 10.100.65.173, nodePort 30424, external 172.17.0.x (k3s ServiceLB)
-   Ingress       usms-portal-ingress   /enrolment /results /timetable / (no controller on Floci)
-                 usms-results-ingress  /results only, internal scheme (Exercise 4)
-
- STILL RUNNING FROM LABS 04 TO 06
-   usms-enrolment-alb -> usms-enrolment-tg (ip) -> ECS tasks, scalable target min 2 max 10, three policies
+ IAM
+   usms-ecs-task-role, usms-ecs-exec-role   ecs-tasks trust + SourceAccount and SourceArn conditions
+   usms-transcripts-reader-role             same scoped trust, USMSStudentDataReadOnly
+   usms-deploy-role                         trusts usms-admin-01, USMSDeployBase (PassRole to 3 roles,
+                                            ecs-tasks only, never EC2), capped by USMSPermissionsBoundary
+   usms-breakglass-role                     admin + MFA + ExternalId, one hour, scaling suspend only
+   usms-dev-01                              one access key, rotated in this lab
 ```
 
-The HPA does only one thing: it writes a number into the Deployment. Everything else, like starting pods and adding them to the Service, is done by the normal Kubernetes controllers I saw in Lab 07.
+A request needs a yes from both boxes. A correct security group does not help if the role can do too much, and a tight role does not help if the database is open to the world.
+
+![Lab 09 architecture](../../screenshots/lab9/lab-09-architecture.png)
+
 
 ## 5. Implementation Procedure
 
-1. **Steps 1 and 2** - started Floci, checked the CPU request and the `_lb_ports_` tag from Lab 07, ran verify-lab-07 and saved a baseline.
-2. **Step 3** - wrote down the four dimensions of scaling and my plan for ten times the traffic.
-3. **Steps 4 and 5** - scaled enrolment by hand to 5 and back, then created drift on purpose and saw apply undo it, and used `kubectl diff`.
-4. **Step 6** - read the QoS classes and the node's allocated resources, and turned the gateway Guaranteed and back.
-5. **Step 7** - checked that metrics-server and the metrics API were there.
-6. **Steps 8 and 9** - created the enrolment HPA, generated load with three busybox pods, and watched it scale up and back down.
-7. **Step 10** - tried to resize the node group from the AWS side.
-8. **Step 11** - compared Cluster Autoscaler and Karpenter, applied a nodeSelector and proved it is enforced.
-9. **Step 12** - created two PDBs and compared the eviction API with a plain delete.
-10. **Steps 13 to 16** - climbed the exposure ladder: port-forward, NodePort, LoadBalancer and Ingress.
-11. **Step 17** - compared ECS and EKS with both running.
-12. **Steps 18 and 19** - restarted Floci and compared before and after, then wrote configs/lab-08.env.
-13. **Section 8** - built and ran verify-lab-08.sh and the smoke test, and wrote (but did not run) the cleanup script.
-14. **Section 15** - removed the load generator and the exercise leftovers.
+1. **Steps 1 and 2** - started Floci, loaded seven env files and recorded what the Lab 2 to 6 verify scripts said, as the baseline.
+2. **Step 3** - probed which IAM and EC2 calls this build supports (Path A).
+3. **Steps 4 and 5** - inventoried every role and built a read-only IAM audit script.
+4. **Steps 6 and 7** - read the transcripts policy, created a read-only policy and a reader role, and added confused deputy conditions to the ECS task role's trust policy.
+5. **Step 8** - created a permissions boundary, a deploy policy with a scoped `iam:PassRole`, and a deploy role that uses both.
+6. **Step 9** - assumed the developer role with a session policy and worked out the intersection by hand and with the simulator.
+7. **Step 10** - rotated usms-dev-01's access key in four steps.
+8. **Step 11** - required IMDSv2 on the web instance and turned the metadata service off on the database instance.
+9. **Step 12** - built a security group audit script.
+10. **Steps 13 to 16** - wrote egress rules for the enrolment, load balancer and database groups, and moved SSH to the bastion group.
+11. **Step 17** - built a reachability matrix and showed the database is not reachable from the internet with five separate controls.
+12. **Steps 18 and 19** - restarted Floci and compared, re-ran the earlier verify scripts, and wrote `configs/lab-09.env`.
+13. **Section 8** - built and ran `verify-lab-09.sh`, and wrote (but did not run) the cleanup script.
 
 ## 6. Results and Evidence
 
 ### 6.1 CLI Output
 
-**Steps 1 and 2 - starting point**
+**Steps 1 and 2 - environment and baseline**
 
-![Step 1](../../screenshots/lab8/step1.png)
-![Step 1 check](../../screenshots/lab8/step1-2.png)
-![Step 2](../../screenshots/lab8/step2.png)
+![Step 1](../../screenshots/lab9/step1.png)
+![Step 2](../../screenshots/lab9/step2.png)
 
-**Observed:** usms-enrolment requests `{"cpu":"50m","memory":"32Mi"}`, so the HPA has something to divide by. The `_lb_ports_` tag is 8081,8082 both in the env file and on the cluster. verify-lab-07 gave PASS=30 FAIL=0. There are four Deployments, not three, because of timetable from Lab 07 Exercise 1. There is one node with 8 CPU, and it already has the labels workload=usms and tier=app.
+**Observed:** all seventeen values were filled in. The first baseline showed that several things from earlier labs had quietly changed while Floci was restarted during Labs 7 and 8: both EC2 instances were stopped, the web data volume was detached, and the security groups had lost their "source group" references, leaving empty rules behind. I started the instances, reattached the volume and added the two group-sourced rules back before starting. The clean baseline was lab-02 32/1, lab-03 34/2, lab-04 38/1, lab-05 49/0, lab-06 39/3, and every remaining failure has a known reason (written in my notes). **Floci limitation:** the empty rules could not be deleted.
 
-**Step 4 - scaling by hand**
+**Step 3 - what this build supports**
 
-![Step 4](../../screenshots/lab8/step4.png)
-![Step 4 traffic](../../screenshots/lab8/step4-2.png)
-![Step 4 back to 2](../../screenshots/lab8/step4-3.png)
+![Step 3](../../screenshots/lab9/step3.png)
+![Step 3 recheck](../../screenshots/lab9/step3-2.png)
 
-**Observed:** scaling to 5 grew the same ReplicaSet with no new rollout, and the endpoints were added one by one as each pod became Ready. Requests through the gateway reached all five pods. Scaling back to 2 kept the two original pods, because Kubernetes removes the newest pods first.
+**Observed:** the probe first said `get-role`, `list-attached-role-policies` and `simulate-principal-policy` were not available. That was wrong: in my `lab-01.env` the role variables hold full ARNs, not names. With plain names all three worked, so this build is Path A. Only `get-credential-report` is missing.
 
-**Step 5 - drift**
+**Steps 4 and 5 - inventory and IAM audit**
 
-![Step 5](../../screenshots/lab8/step5.png)
-![Step 5 apply](../../screenshots/lab8/step5-2.png)
-![Step 5 diff](../../screenshots/lab8/step5-3.png)
-![Step 5 restore](../../screenshots/lab8/step5-4.png)
+![Step 4](../../screenshots/lab9/step4.png)
+![Step 4 inventory](../../screenshots/lab9/step4-2.png)
+![Step 4 your turn](../../screenshots/lab9/step4-3.png)
+![Step 5](../../screenshots/lab9/step5.png)
 
-**Observed:** the cluster said 6 and the file said 2, and nothing warned me. A plain `kubectl apply` of the file quietly put it back to 2. `kubectl diff` showed the change (replicas 2 to 3) before applying it, and it exits 1 when there is a difference, which is not an error.
+**Observed:** 10 roles, 4 users and 11 customer managed policies. `USMSStudentDataReadWrite` is attached to three roles, and `USMSReportingReadOnly` to nothing. No role had a permissions boundary. The audit gave HIGH=8 MED=21 and exit code 1. All eight HIGH findings had the same shape: a service principal in a trust policy with no condition.
 
-**Step 6 - requests, limits and QoS**
+**Steps 6 and 7 - the read-only split and the confused deputy fix**
 
-![Step 6](../../screenshots/lab8/step6.png)
-![Step 6 node](../../screenshots/lab8/step6-2.png)
-![Step 6 denominator](../../screenshots/lab8/step6-3.png)
-![Step 6 Guaranteed](../../screenshots/lab8/step6-yourturn.png)
-![Step 6 back to Burstable](../../screenshots/lab8/step6-yourturn-2.png)
+![Step 6](../../screenshots/lab9/step6.png)
+![Step 7 policy](../../screenshots/lab9/step7.png)
+![Step 7 trust](../../screenshots/lab9/step7-2.png)
+![Step 7 role](../../screenshots/lab9/step7-3.png)
+![Step 7 update](../../screenshots/lab9/step7-4.png)
+![Step 7 check](../../screenshots/lab9/step7-5.png)
 
-**Observed:** all USMS pods are Burstable (50m request, 200m limit). The HPA target of 50% means 25m per pod, not 50% of the node. In the Your turn, setting the gateway's requests equal to its limits made it Guaranteed, and putting them back made it Burstable again. The pod was replaced both times, because requests are part of the pod template.
+**Observed:** my Lab 1 policy grants `PutObject` and `DeleteObject` as well as reads, to three roles. The bucket does not exist yet (404), which is expected. I created `USMSStudentDataReadOnly` (read, with an explicit Deny on every write) and `usms-transcripts-reader-role`, and rewrote the ECS task role's trust policy. The check said "SAME PRINCIPAL, NEW CONDITION", and the task role still has its read-write policy for Lab 10.
 
-**Step 7 - metrics**
+**Step 8 - scoped PassRole and the boundary**
 
-![Step 7](../../screenshots/lab8/step7.png)
-![Step 7 top](../../screenshots/lab8/step7-2.png)
+![Step 8 boundary](../../screenshots/lab9/step8.png)
+![Step 8 deploy policy](../../screenshots/lab9/step8-2.png)
+![Step 8 role](../../screenshots/lab9/step8-3.png)
+![Step 8 check](../../screenshots/lab9/step8-4.png)
 
-**Observed:** metrics-server ships with k3s, so the metrics API was AVAILABLE and nothing had to be installed. Every USMS pod idled at 1m CPU, which is 2% of the request. The node showed 79m as 4%, which made me check: the node's capacity is 8 CPU, but only 1930m is allocatable, because Floci holds the rest back for the system.
+**Observed:** `usms-deploy-role` trusts only `usms-admin-01`, has `USMSPermissionsBoundary` as its boundary, and can pass only three named roles, only to ECS tasks, with an explicit Deny on passing anything to EC2. The boundary itself is attached to nothing, which is correct for a ceiling.
 
-**Steps 8 and 9 - the HPA moving**
+**Step 9 - session policy and the intersection**
 
-![Step 8](../../screenshots/lab8/step8.png)
-![Step 8 check](../../screenshots/lab8/step8-2.png)
-![Step 8 label](../../screenshots/lab8/step8-3.png)
-![Step 9 watcher script](../../screenshots/lab8/step9.png)
-![Step 9 load](../../screenshots/lab8/step9-2.png)
-![Step 9 scaled up](../../screenshots/lab8/step9-3.png)
-![Step 9 back down](../../screenshots/lab8/step9-4.png)
-![Step 9 events](../../screenshots/lab8/step9-5.png)
+![Step 9](../../screenshots/lab9/step9.png)
+![Step 9 assume](../../screenshots/lab9/step9-2.png)
+![Step 9 first calculation](../../screenshots/lab9/step9-3.png)
+![Step 9 back to root](../../screenshots/lab9/step9-4.png)
+![Step 9 the missing policy](../../screenshots/lab9/step9-5.png)
+![Step 9 rebuilt inventory](../../screenshots/lab9/step9-6.png)
+![Step 9 agreement](../../screenshots/lab9/step9-8.png)
+![Step 9 cap shown](../../screenshots/lab9/step9-9.png)
+![Step 9 boundary fixed](../../screenshots/lab9/step9-10.png)
 
-**Observed:** the HPA showed `cpu: 2%/50%` with ScalingActive True. With three load generators running, CPU went to 42% and then 59%, and the HPA scaled enrolment from 2 to 3. It stayed at 3 with about 40% CPU, because that was all the load my machine could make. After I removed the load, CPU dropped to 2% within 20 seconds, but the replicas stayed at 3 for about five minutes (the 300 second stabilisation window) before going back to 2. The two events were "New size: 3; reason: cpu resource utilization (percentage of request) above target" and "New size: 2; reason: All metrics below target".
+**Observed:** my first calculation said everything was denied, while the IAM simulator said `DescribeVpcs` was allowed. Checking directly showed `USMSDeveloperBase` is attached to the developer role, so my Step 4 inventory had silently missed it when an AWS CLI call crashed. After rebuilding it with retries the two methods agreed: `ec2:DescribeVpcs` allowed, `ec2:RunInstances` not in the identity policy so denied (simulator `implicitDeny`), and `iam:CreateUser` explicitly denied. I also found that the handout's inventory read the permissions boundary from `list-roles`, which never returns it, so I filled it in from `get-role`. The audit after these steps was HIGH=7 MED=35.
 
-**Step 10 - node group**
+**Step 10 - key rotation**
 
-![Step 10](../../screenshots/lab8/step10.png)
-![Step 10 update](../../screenshots/lab8/step10-2.png)
-![Step 10 after](../../screenshots/lab8/step10-3.png)
+![Step 10](../../screenshots/lab9/step10.png)
+![Step 10 new key](../../screenshots/lab9/step10-2.png)
+![Step 10 profile](../../screenshots/lab9/step10-3.png)
+![Step 10 deactivate](../../screenshots/lab9/step10-4.png)
+![Step 10 delete](../../screenshots/lab9/step10-5.png)
 
-**Floci limitation:** `update-nodegroup-config` failed with "UnknownOperationException ... Unknown operation: POST /clusters/usms-eks-cluster/node-groups/usms-eks-nodes/update-config". So Floci 2.2.0 does not have the operation at all, which is worse than the handout expected (it said the numbers would be saved but no node would appear). The node group stayed at min 2, max 4, desired 2, and there is still one node.
+**Observed:** create, move the profile, deactivate, then delete. The new secret went straight into a git-ignored file and never appeared on screen. At the end there is exactly one key, created today, and the profile still answers. **Floci limitation:** Floci accepts any credentials, so the profile answering proves less here than on real AWS.
 
-**Step 11 - nodeSelector**
+**Step 11 - IMDSv2**
 
-![Step 11](../../screenshots/lab8/step11.png)
-![Step 11 applied](../../screenshots/lab8/step11-2.png)
-![Step 11 bad value](../../screenshots/lab8/step11-3.png)
-![Step 11 event](../../screenshots/lab8/step11-3b.png)
-![Step 11 restored](../../screenshots/lab8/step11-4.png)
-![Step 11 manifest](../../screenshots/lab8/step11-5.png)
+![Step 11](../../screenshots/lab9/step11.png)
+![Step 11 your turn](../../screenshots/lab9/step11-yourturn.png)
+![Step 11 recheck](../../screenshots/lab9/step11-check.png)
 
-**Observed:** with `workload=nonexistent` the new pod stayed Pending with "didn't match Pod's node affinity/selector", while the two old pods kept serving because of maxUnavailable 0. Setting it back to `workload=usms` went back to the same two pods. I added the nodeSelector to the Lab 07 manifest so the file matches the cluster. **Conceptual:** Cluster Autoscaler and Karpenter are not installed, because both need IRSA and a real Auto Scaling group.
+**Observed:** `usms-web-01` went from `HttpTokens optional` to `required`, hop limit 1, endpoint still enabled because it has a role. `usms-db-01` has no instance profile, so I turned its metadata service off completely. My first attempt at this step failed on every call with an `ld.so` error, which turned out to be my laptop running low on memory. After restarting it I re-checked everything from Steps 4 to 11 in one go (the third screenshot) and it all matched.
 
-**Step 12 - PodDisruptionBudgets**
+**Steps 12 to 16 - the network**
 
-![Step 12](../../screenshots/lab8/step12.png)
-![Step 12 Lab 7 file](../../screenshots/lab8/step12-2.png)
-![Step 12 eviction](../../screenshots/lab8/step12-3.png)
+![Step 12](../../screenshots/lab9/step12.png)
+![Step 12 more](../../screenshots/lab9/step12-2.png)
+![Step 13](../../screenshots/lab9/step13.png)
+![Step 13 document](../../screenshots/lab9/step13-2.png)
+![Step 13 change](../../screenshots/lab9/step13-3.png)
+![Step 13 by rule id](../../screenshots/lab9/step13-4.png)
+![Step 13 after restart](../../screenshots/lab9/step13-5.png)
+![Step 14](../../screenshots/lab9/step14.png)
+![Step 15](../../screenshots/lab9/step15.png)
+![Step 15 three zeros](../../screenshots/lab9/step15-2.png)
+![Step 16](../../screenshots/lab9/step16.png)
+![Step 16 check](../../screenshots/lab9/step16-2.png)
 
-**Observed:** the gateway PDB (minAvailable 1) allowed 0 disruptions on a single gateway pod, and the enrolment PDB (maxUnavailable 1) allowed 1. The eviction API refused the gateway pod with "Cannot evict pod as it would violate the pod's disruption budget", but `kubectl delete pod` removed it straight away. The drain dry run listed the gateway as evictable, because a client dry run does not ask the eviction API.
+**Observed:** the security group audit gave HIGH=4 MED=11 LOW=9 across 9 groups, and found a second path to the database from `usms-exam-sg` that the handout does not expect. After Steps 13 to 15 each of the three groups has written egress and zero allow-all rules, and the load balancer may only connect to the enrolment group. SSH to the web instance now only comes from the bastion group. **Floci limitation:** for a while it looked as if revoking rules did not work. It did. Floci keeps two listings of rules and one of them (`describe-security-group-rules`) is not updated when a rule is removed, so it kept showing rules that were already gone. `describe-security-groups` shows the real state.
 
-**Steps 13 and 14 - port-forward and NodePort**
+**Step 17 - reachability and the negative proof**
 
-![Step 13](../../screenshots/lab8/step13.png)
-![Step 13 port-forward](../../screenshots/lab8/step13-2.png)
-![Step 14](../../screenshots/lab8/step14.png)
-![Step 14 in cluster](../../screenshots/lab8/step14-2.png)
-![Step 14 from my machine](../../screenshots/lab8/step14-3.png)
-![Step 14 fallback](../../screenshots/lab8/step14-4.png)
+![Step 17 matrix](../../screenshots/lab9/step17.png)
+![Step 17 proof](../../screenshots/lab9/step17-2.png)
 
-**Observed:** curl to the gateway's ClusterIP from my machine failed, and port-forward reached all four routes. The NodePort 80:30080 answered from both results pods inside the cluster. From my machine, `localhost:30080` failed (**Floci limitation:** the port is not published), but the node's own IP `172.17.0.2:30080` worked, because the k3s node is a Docker container on a bridge my machine can reach.
+**Observed:** two groups admit the internet (the load balancer and the web instance), and five groups are protected by exactly one ingress rule. For the database, four of the five controls hold: no auto-assigned public IP, a route through the NAT and no internet gateway, a security group with group sources only, and a custom NACL. **Floci limitation:** control 1 failed because Floci gives every running instance an address from its Docker network (172.21.0.8). On real AWS it would have no public address. The claim still holds, which is the point of having several controls.
 
-**Step 15 - LoadBalancer**
+**Steps 18 and 19 - persistence, regression and the env file**
 
-![Step 15](../../screenshots/lab8/step15.png)
-![Step 15 watch](../../screenshots/lab8/step15-2.png)
-![Step 15 reach](../../screenshots/lab8/step15-3.png)
-![Step 15 one line](../../screenshots/lab8/step15-4.png)
+![Step 18](../../screenshots/lab9/step18.png)
+![Step 18 restart](../../screenshots/lab9/step18-2.png)
+![Step 18 compare](../../screenshots/lab9/step18-3.png)
+![Step 18 nothing broke](../../screenshots/lab9/step18-4.png)
+![Step 19](../../screenshots/lab9/step19.png)
+![Step 19 check](../../screenshots/lab9/step19-2.png)
 
-**Observed:** EXTERNAL-IP went from `<pending>` to 172.17.0.2 within seconds, because k3s has a small built-in load balancer that runs as a `svclb` pod. Curl to that IP reached the gateway. The whole ladder fits on one line: `type=LoadBalancer clusterIP=10.100.65.173 nodePort=30424 external=172.17.0.2`. **Floci limitation:** ports 8081 and 8082 gave nothing. `docker ps` shows the only published port on the k3s container is 6500 for the API, so the `_lb_ports_` tag is stored but never acted on.
+**Observed:** I recorded eleven facts (the handout's nine plus the two group references, since those are what went missing before), restarted Floci, found every ID again from the API and read them back: PERSISTENCE PROVEN. After starting the instances again, the five earlier verify scripts gave exactly the same results as the baseline: NOTHING BROKE. `configs/lab-09.env` has 16 exports (17 after Exercise 5) with no empty values and no access key ID.
 
-**Step 16 - Ingress**
+**Section 8 - verification and cleanup**
 
-![Step 16](../../screenshots/lab8/step16.png)
-![Step 16 Ingress](../../screenshots/lab8/step16-2.png)
-![Step 16 no address](../../screenshots/lab8/step16-3.png)
+![Verification](../../screenshots/lab9/section8-verify.png)
+![Cleanup script](../../screenshots/lab9/section8-cleanup.png)
 
-**Floci limitation:** there is no IngressClass and no ingress controller, because Floci starts k3s with Traefik turned off. The Ingress is stored and the API server resolved every path to the right pod IPs, but it has no address and nothing routes through it. **Conceptual:** on EKS the AWS Load Balancer Controller would turn it into an internet-facing ALB, doing for me the target group, load balancer, listener and rule commands I ran by hand in Lab 05.
-
-**Step 17 - ECS and EKS side by side**
-
-![Step 17](../../screenshots/lab8/step17.png)
-
-**Observed:** the ECS service is still at 2 of 2 tasks with min 2 and max 10 and three scaling policies, behind usms-enrolment-alb and an ip target group. The EKS side shows the HPA, five Services, the Ingress and both PDBs. The two filled-in comparison tables are in my notes.
-
-**Steps 18 and 19 - persistence and env file**
-
-![Before restart](../../screenshots/lab8/step18.png)
-![Restart](../../screenshots/lab8/step18-2.png)
-![After restart](../../screenshots/lab8/step18-3.png)
-![After restart running](../../screenshots/lab8/step18-4.png)
-![Step 19](../../screenshots/lab8/step19.png)
-![Step 19 check](../../screenshots/lab8/step19-2.png)
-
-**Observed:** after a full stop and start, everything I recorded was identical: PERSISTENCE PROVEN. Even the gateway's auto-allocated nodePort stayed 30424. The only thing that changed was the gateway's external IP, which went from 172.17.0.2 to 172.17.0.3, because Docker gave the node container a new address. configs/lab-08.env has 19 exports. The only empty one is the ingress class, since there is no controller.
-
-**Section 8 and 15 - verification, cleanup script and tidy up**
-
-![Verification](../../screenshots/lab8/section8-verify.png)
-![Smoke test](../../screenshots/lab8/section8-smoke.png)
-![Cleanup script](../../screenshots/lab8/section8-cleanup.png)
-![Section 15](../../screenshots/lab8/section15.png)
-
-**Observed:** verify-lab-08.sh gave **PASS=33 FAIL=1**. The one failure is "node group maxSize was raised to 6", which is the Step 10 limitation, and I left that check as it is because it is the honest result. The smoke test passed for all four routes. The cleanup script is written and syntax checked but not run. At the end there are four Deployments, two HPAs, two PDBs, two Ingresses, no load generator and no cordoned node.
+**Observed:** `verify-lab-09.sh` gave **PASS=49 FAIL=1**. The one failure is "usms-db-01 has NO public address", the same Floci address as in Step 17. I fixed several bugs in the handout's version, each marked `# FIX`. The cleanup script is written and syntax checked but not run.
 
 ### 6.2 AWS Management Console Verification
 
-Floci does not have a web console, so there is no console screenshot for this lab. The `describe` and `kubectl get` commands in 6.1 are the verification.
+Floci does not have a web console, so there is no console screenshot for this lab. The `describe`, `get` and `list` commands in 6.1 are the verification.
 
 ## 7. Analysis and Discussion
 
-The objectives were achieved for everything Kubernetes controls. The HPA really scaled on real load and held capacity through the stabilisation window, the nodeSelector and PDBs were enforced, every rung of the exposure ladder was shown, and all of it survived a restart. The parts that live on the AWS side (resizing the node group, a real load balancer, an ALB from an Ingress, Cluster Autoscaler and Karpenter) could not be shown on Floci, so I recorded them as limitations or explained them instead.
+The objectives were achieved. Every identity fix and every network fix from the handout is in place and passes its check, they survive a restart, and none of the earlier labs' checks changed. Because Floci enforces neither IAM nor security groups, every proof in this lab is a proof by reading the configuration, which is also how a claim about what cannot happen would be checked on a real account.
 
-The result that taught me the most was Step 9. The handout example went from 2 to 4, mine went to 3 and stayed there, and working out why made the HPA make sense: there is a 10% tolerance, new pods without metrics count as 0% when scaling up, and once the load was spread over 3 pods each was under 50%, so 3 was the right answer for that much traffic. The other one was Step 12. A PDB is only a rule for cooperative tools like drain, and a plain delete goes straight through it.
+The most useful thing I learned was how easy it is to trust the wrong evidence. Three times in this lab a result looked solid and was wrong: the probe that said basic calls were unsupported (the variable held an ARN), the inventory that said the developer role had no policy (a call had crashed), and the rule listing that said revokes did not work (it was a stale listing). Each time, checking with a second method found the problem.
 
 Problems I ran into and how I fixed them:
 
-- **Old "05b" labels.** The handout's manifests had `lab: "05b"`, which looks like a leftover from an older numbering of this lab. I applied the handout version a few times by mistake and fixed each one with sed and a second apply. Only the label changed, so nothing was restarted.
-- **The Lab 07 gateway file still had the old ClusterIP Service.** After Step 15 the gateway is a LoadBalancer, so applying the Lab 07 file would have quietly undone it. I moved the Service out of that file and left a comment pointing to the Lab 08 one, so two files no longer fight over the same object.
-- **Two PDBs with the same name.** The handout creates usms-enrolment-pdb, which I already had from Lab 07 Exercise 4 as minAvailable 1. I let the Lab 08 version (maxUnavailable 1) win and updated the Lab 07 file to match.
-- **The handout's Python for the nodeSelector** looks for `spec:` directly followed by `containers:`, which my file does not have because of the Lab 07 spread rules. I used a version that puts the nodeSelector right under the pod template's spec.
-- **The verify script** had the same `.gitkeep` bug as Labs 06 and 07, did not set KUBECONFIG, and expected exactly three Ingress paths while I have four. I fixed these and marked them `# FIX`.
-- **A second terminal lost KUBECONFIG**, so port-forward failed with "You must be logged in to the server" until I exported it again.
+- **Earlier labs had drifted.** Stopped instances, a detached volume and lost group references, all from Floci restarts. I repaired them before starting and recorded it.
+- **Role variables were ARNs.** I added plain-name variables and used them wherever a name was needed.
+- **The inventory missed a policy and every boundary.** I added retries, took the boundary from `get-role`, and saved the builder as `scripts/utilities/usms-iam-inventory.sh`.
+- **Handout queries that could never work.** Several checks were missing `SecurityGroups[0].` or compared the protocol to the number -1 instead of the text "-1", and one check nested escaped quotes so deeply that it broke the query. I fixed each one and marked it.
+- **My laptop.** It crashed AWS CLI calls several times when it was short of memory. A restart fixed it, and I re-checked all the work afterwards.
+- **zsh.** `${PIPESTATUS[0]}` does not exist in zsh and unquoted variables do not split into words, which mattered for some commands.
 
 ## 8. Reflection
 
-**What I learned.** I had used HPAs in DSO202, but I did not really know that the percentage is of the request, not the node, or what the behavior block does. Watching the replicas stay at 3 for five minutes at 2% CPU made the stabilisation window very clear. I also learned that scaling pods and scaling nodes are two different systems that do not talk to each other, and that an Ingress is only a description until a controller acts on it.
+**What I learned.** My specialisation is software security, so I knew most of these terms, but this lab made them concrete. I had not thought about the trust policy as the more dangerous half of a role, or about egress as something you design rather than leave open. Working out the session policy intersection by hand and then matching it against the simulator was the clearest lesson in how IAM evaluation actually works.
 
-**Challenges.** The hardest part was keeping the repository and the cluster in agreement. Step 5 showed what drift does, and then I kept finding real drift of my own: old labels, a Service defined in two files, a PDB defined twice. Fixing those properly took longer than the steps themselves. Floci also did less on the AWS side than the handout expected, so I had to check each result instead of assuming it worked.
+**Challenges.** The hardest part was not knowing what to trust. Between Floci's stale listings, the crashed calls and my laptop running out of memory, there were moments where I was ready to start the lab again. What helped was checking each result a second way instead of redoing everything.
 
-**Real world use.** For USMS I would still use ECS on Fargate, because there are no nodes to manage and Lab 06 already handles the busy weeks. If USMS grows into many services, one EKS cluster with one Ingress and HPAs would become worth it, especially because the manifests are not tied to AWS.
+**Real world use.** On a real account I would add the detective side that this lab does not have: CloudTrail, GuardDuty and AWS Config, so a change to any of these controls would be noticed. I would also replace the remaining access key with short-lived credentials through IAM Identity Center.
 
-**What I want to explore more.** Karpenter and the AWS Load Balancer Controller on a real EKS cluster, to see a Pending pod turn into a new node and an Ingress turn into an ALB. I would also like to try KEDA, so the HPA could scale on the SQS queue the way Lab 06 did.
+**What I want to explore more.** IAM Access Analyzer on a real account, to see the "who can access this bucket" question answered from the bucket's side, and applying the Exercise 5 bucket policy once Lab 10 has created the bucket.
 
 ## 9. Conclusion
 
-The objectives were achieved. usms-enrolment and usms-results now have HPAs, the HPA was seen scaling up under load and back down after its window, the gateway has two replicas and a PDB that allows safe drains, and USMS is exposed through every rung from port-forward to Ingress, with a results-only Ingress designed for the Examinations Office. Everything persisted across a restart, and the names and numbers are recorded in `configs/lab-08.env` for later labs.
+The objectives were achieved. USMS now has a read-only path to the transcripts, trust policies with confused deputy conditions, a deploy role with a scoped `iam:PassRole` and a permissions boundary, one freshly rotated access key, IMDSv2 on the web instance, written egress on four groups and SSH only from a bastion group. Every control survived a restart, the earlier labs' checks did not change, and `verify-lab-09.sh` passes everything except the one known Floci address difference.
 
-The key ideas I am taking from this lab are that the HPA percentage is of the pod's request, that pods and nodes scale separately, that a PDB only protects against voluntary disruptions, and that each Service type keeps the one below it. I also learned to keep the files and the cluster in agreement, because apply will quietly undo anything the files do not say.
+The key ideas I am taking from this lab are that an API call and a packet are decided by two separate systems, that a trust policy decides who can become a role, that boundaries and session policies only take away, and that a claim about what cannot happen is proven by several independent controls, not one.
 
 ## 10. Appendix
 
-- Notes, the four dimensions plan, the ECS and EKS comparison tables and the seven review questions: `notes/lab-08-notes.md`
-- Exercises 1 to 5: `labs/lab-08-eks-scaling/exercises.md` (Exercise 3's manifests: `labs/lab-08-eks-scaling/ex3-reports-broken.yaml` and `ex3-reports-fixed.yaml`)
-- Manifests: `manifests/lab-08/` (enrolment HPA, results HPA, load generator, PDBs, NodePort Service, LoadBalancer Service, portal Ingress, results Ingress)
-- Lab 07 manifests updated: `20-enrolment.yaml` (nodeSelector), `25-enrolment-pdb.yaml` (maxUnavailable 1), `40-gateway.yaml` (2 replicas, Service moved to Lab 08)
-- Recorded names and numbers: `configs/lab-08.env` (19 exports)
-- Scripts: `scripts/utilities/hpa-watch.sh`, `scripts/utilities/verify-lab-08.sh`, `scripts/cleanup/lab-08-cleanup.sh` (not run)
-- Screenshots: `screenshots/lab8/`
-- Kept locally and not committed (git-ignored): the baseline, node group before and after files, restart comparison, eviction body, and the two Exercise 5 files for Lab 10
+- Notes, audit results, the access table and the seven review questions: `notes/lab-09-notes.md`
+- Exercises 1 to 5: `labs/lab-09-security/exercises.md`
+- Policy documents: `policies/usms-student-data-ro-policy.json`, `policies/usms-deploy-policy.json`, `policies/usms-permissions-boundary.json`, `policies/trust-ecs-tasks-scoped.json`, `policies/trust-deploy.json`, `policies/usms-alb-sg-egress.json`, `policies/usms-enrolment-sg-egress.json`, `policies/usms-db-sg-egress.json`, `policies/usms-egress-allow-all.json` (the undo), `policies/usms-app-sg-ssh-bastion.json`, and from the exercises `policies/usms-app-sg-egress.json`, `policies/trust-breakglass.json`, `policies/usms-breakglass-policy.json`, `policies/trust-lambda-scoped.json`
+- Accepted audit findings, with reasons: `configs/usms-iam-accepted-findings.txt`
+- Recorded names and ARNs: `configs/lab-09.env` (17 exports, no access key ID)
+- Scripts: `scripts/utilities/usms-iam-inventory.sh`, `usms-iam-audit.sh`, `usms-sg-audit.sh`, `usms-reachability-matrix.sh`, `usms-exposure-report.sh`, `usms-bucket-policy-draft.sh`, `verify-lab-09.sh`, and `scripts/cleanup/lab-09-cleanup.sh` (not run)
+- Screenshots: `screenshots/lab9/`
+- Kept locally and not committed (git-ignored): the new access key file, the inventory and findings, the before and after files, the exposure report, the bucket policy draft and the Lab 10 readiness file
 

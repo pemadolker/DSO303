@@ -70,6 +70,8 @@ usms-vpc  10.0.0.0/16
       (grants S3 access to a bucket that doesn't exist until Lab 4 — see Section 7, Q2)
 ```
 
+![alt text](../../screenshots/lab3/lab-03-architecture.png)
+
 ## 5. Implementation Procedure
 
 Worked through the AWS CLI against Floci, with `configs/course.env`,
