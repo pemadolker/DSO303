@@ -1,0 +1,36 @@
+version: 0.2
+
+env:
+  variables:
+    SERVICE_NAME: "results"
+    ARTIFACT_DIR: "dist"
+
+phases:
+  pre_build:
+    commands:
+      - test -f VERSION || { echo "VERSION file is missing"; exit 1; }
+  build:
+    commands:
+      - USMS_RELEASE="$(tr -d '[:space:]' < VERSION)"
+      - BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - rm -rf "$ARTIFACT_DIR"
+      - mkdir -p "$ARTIFACT_DIR"
+      - cp -R src/. "$ARTIFACT_DIR"/
+      - sed -i -e "s|__RELEASE__|$USMS_RELEASE|g" "$ARTIFACT_DIR/index.html"
+      - |
+        cat > "$ARTIFACT_DIR/build-metadata.json" << META
+        {
+          "service": "$SERVICE_NAME",
+          "release": "$USMS_RELEASE",
+          "builtAt": "$BUILT_AT",
+          "buildId": "${CODEBUILD_BUILD_ID:-local}"
+        }
+        META
+  post_build:
+    commands:
+      - python3 -m json.tool "$ARTIFACT_DIR/build-metadata.json"
+
+artifacts:
+  base-directory: dist
+  files:
+    - '**/*'

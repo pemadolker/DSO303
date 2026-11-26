@@ -1,0 +1,6 @@
+{
+  "Name": "usms-enrolment-source-changed",
+  "Description": "Start usms-enrolment-pipeline when a new version of the enrolment source zip is written",
+  "State": "ENABLED",
+  "EventPattern": "{\"source\":[\"aws.s3\"],\"detail-type\":[\"Object Created\"],\"detail\":{\"bucket\":{\"name\":[\"usms-pipeline-artifacts\"]},\"object\":{\"key\":[\"source/usms-enrolment-src.zip\"]}}}"
+}
