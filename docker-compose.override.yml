@@ -1,0 +1,12 @@
+# docker-compose.override.yml - merged automatically by `docker compose up -d` (scripts/setup/floci-up.sh).
+#
+# Why: the Floci container is attached to two networks - floci-course_default and the Docker network
+# for the Lab 02 VPC (10.0.0.0/16). Auto-detection gave Lambda containers Floci's VPC address
+# (10.0.0.2), which they cannot reach from floci-course_default, so every invocation failed with
+# "LAMBDA_RUNTIME Failed to get next invocation. No Response from endpoint" and timed out.
+# These two settings pin the network Lambda containers join and the address they call back on.
+services:
+  floci:
+    environment:
+      FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK: floci-course_default
+      FLOCI_SERVICES_LAMBDA_DOCKER_HOST_OVERRIDE: floci

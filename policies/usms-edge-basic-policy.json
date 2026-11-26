@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WriteEdgeFunctionLogsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:000000000000:log-group:/aws/lambda/usms-edge-*",
+        "arn:aws:logs:*:000000000000:log-group:/aws/lambda/usms-edge-*:*",
+        "arn:aws:logs:*:000000000000:log-group:/aws/lambda/us-east-1.usms-edge-*",
+        "arn:aws:logs:*:000000000000:log-group:/aws/lambda/us-east-1.usms-edge-*:*"
+      ]
+    }
+  ]
+}
