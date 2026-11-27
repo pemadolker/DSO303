@@ -1,21 +1,22 @@
 # Lab 12 Notes: Deploying to Amazon ECS from the Pipeline
 
-Deploy path in `outputs/lab-12-deploy-probe.txt`.
+Deploy path: A, CodeDeploy answered yes (`outputs/lab-12-deploy-probe.txt`). Observed vs recorded: ECR is real (push, pull by digest, immutability enforced); CodeBuild is recorded only (Lab 11), so images were pushed by the local runner; the pipeline's Deploy stage failed both runs, so the service only moved by hand.
 
 ## Steps 1-3
-- Lab 11's readiness file names the BuildOutput key and an `imagedefinitions.json` that is an array at the artifact root.
+- Lab 11's readiness file says there is no BuildOutput object in Floci (the artifact was rebuilt locally from the pipeline's source version) and that `imagedefinitions.json` is an array at the artifact root.
 - Probe: Docker reachable, ECR answers and creates/deletes a probe repo, ECS answers; CodeDeploy result recorded.
 
 ## Step 4: ECR port range
-- My `docker-compose.yml` publishes only `4566:4566` and has no commented range, so the handout's `sed` changes nothing. Added `- "5100-5104:5100-5104"` under `ports:` in the same style. Backups: `docker-compose.yml.bak-<time>` (handout) and `outputs/backup-lab-12/`.
-- `floci-up.sh` runs `docker compose up -d`, which recreates the container because the ports changed. Hybrid storage on the bind mount kept everything; the ECS service was still ACTIVE.
+- My `docker-compose.yml` had no commented range, so I added `- "5100-5104:5100-5104"`. Backups: `docker-compose.yml.bak-<time>` and `outputs/backup-lab-12/`.
+- `floci-up.sh` failed: `Bind for 127.0.0.1:5100 failed: port is already allocated`. `docker ps` showed `floci-aws-floci-course-ecr-registry` on `127.0.0.1:5100->5000`, Floci 2.2's own registry container, and `ss -ltnp` showed docker-proxy on 5100. So the range is not needed on the main container; I commented the line out again and Floci started. ECS service still ACTIVE (hybrid storage).
 
 ## Steps 5-9: Registry and image
 - `--image-tag-mutability MUTABLE` (the default, kept so the lab can retag), `scanOnPush=true`, `AES256`.
 - Registry host = everything before the first `/` of the repository URI (`${ECR_URI%%/*}`).
 - `docker login --password-stdin` from a pipe: the token never appears in `ps` or history. Docker stores a reference in `~/.docker/config.json`.
+- First push failed: `server gave HTTP response to HTTPS client`. Docker only trusts plain HTTP for `localhost`/`127.0.0.1`, not `000000000000.dkr.ecr.us-east-1.localhost:4566`. Added that one host to `insecure-registries` in `/etc/docker/daemon.json` (kept my `dns` entry), restarted Docker and Floci, pushed again. Real ECR is HTTPS.
 - Dockerfile copies `dist/` (built output) into `nginx:1.27-alpine`. `.dockerignore` keeps the source, tests and buildspec out of the image.
-- r6: built, tagged with the full repository URI, pushed. Digest recorded with a timestamp in `outputs/lab-12-image-digest.txt`. Deleted the local copies and pulled `ECR_URI@sha256:...` back.
+- r6: built, tagged with the full repository URI, pushed: `sha256:75c3fcbe...`. Digest recorded with a timestamp in `outputs/lab-12-image-digest.txt`. Deleted the local copies and pulled `ECR_URI@sha256:...` back. `describe-images` size = 0 (Floci does not compute it).
 
 ## Steps 10-11: Task definition
 - describe → remove the eight read-only fields (`taskDefinitionArn`, `revision`, `status`, `requiresAttributes`, `compatibilities`, `registeredAt`, `registeredBy`, `deregisteredAt`) → change the image of `enrolment-api` → register. `grep -c '\$'` = 0.
@@ -41,12 +42,13 @@ Deploy path in `outputs/lab-12-deploy-probe.txt`.
 - **Your turn - Deploy reading SourceOutput.** The ECS action looks for `imagedefinitions.json` at the root of its input artifact. SourceOutput is the source zip: its root has `buildspec.yml`, `VERSION`, `src/`, `config/`, `tests/`, `Dockerfile`, but no `imagedefinitions.json` (that file only exists in `dist/` after a build). So Build would succeed, and **Deploy** would fail saying the file was not found in the input artifact. The mistake is in the Deploy action's configuration, but the symptom looks like a build problem ("the build did not produce the file") and sends you to the wrong place.
 
 ## Step 17: End to end
-- The stand-in build image has no Docker, so I pushed r7 from my machine with the local runner before starting the pipeline. The pipeline's build still produced `imagedefinitions.json` naming `:r7`, and Deploy registered a new revision and updated the service. Before/after revision and the image after are in `outputs/lab-12-deploy-evidence.txt`.
+- Floci does not run builds, so I pushed r7 from my machine with the local runner (`sha256:cb6cc079...`) before starting the pipeline.
+- Execution: Source Succeeded, Build Succeeded, **Deploy Failed**. Service before `:3`, after `:3`, image still `:r6` (`outputs/lab-12-deploy-evidence.txt`). Floci gives no error (`errorDetails` empty in `get-pipeline-state`). Most likely reason: Deploy reads `imagedefinitions.json` from BuildOutput, and Floci's Build stage writes no BuildOutput (Lab 11). On real AWS: new revision `:4` naming `:r7`, service rolled to it.
 
 ## Step 18: Rollback drill
-- r8 uploaded; the registry has no r8. After the pipeline ran, the service pointed at a revision naming `:r8`. Nothing complained.
-- Rolled back with `update-service --task-definition <good revision>`. Source set back to r7 so the next run does not redeploy r8.
-- **Your turn - the bad revision.** I left the bad revision registered and did not deregister it. Deregistering only marks it INACTIVE (it cannot be deleted from history anyway), and keeping it ACTIVE keeps the evidence of the failed release next to the good ones, which is useful in a post-incident review. The risk is that someone later deploys "the latest revision" and gets the broken one. How someone would notice in six months without being told: an audit that, for every ACTIVE revision, checks its image tag exists in ECR (`describe-images --image-ids imageTag=...`) would flag it immediately. If I wanted to remove the risk instead, `aws ecs deregister-task-definition` is the one command, and it is reversible in the sense that it deletes nothing.
+- r8 uploaded; the registry has no r8. The pipeline ran and Deploy **Failed** again (same reason), so no `:r8` revision was registered and the service stayed on `:3`. On real AWS Deploy would succeed, the service would point at a revision naming a missing tag, tasks would fail with `CannotPullContainerError` and the circuit breaker would roll back.
+- Ran the rollback anyway: `update-service --task-definition usms-enrolment:3` (a no-op here, same revision). Source set back to r7 so the next run does not redeploy r8.
+- **Your turn - the bad revision** (answered for real AWS, where it would exist; on Floci none was registered). I would leave the bad revision registered and not deregister it. Deregistering only marks it INACTIVE (it cannot be deleted from history anyway), and keeping it ACTIVE keeps the evidence of the failed release next to the good ones, which is useful in a post-incident review. The risk is that someone later deploys "the latest revision" and gets the broken one. How someone would notice in six months without being told: an audit that, for every ACTIVE revision, checks its image tag exists in ECR (`describe-images --image-ids imageTag=...`) would flag it immediately. If I wanted to remove the risk instead, `aws ecs deregister-task-definition` is the one command, and it is reversible in the sense that it deletes nothing.
 
 ## Step 19: Blue/green on paper
 - `appspec.yaml` with `<TASK_DEFINITION>` (a placeholder CodeDeploy fills in itself), container `enrolment-api:80`, five lifecycle hooks; `AfterAllowTestTraffic` is the one that tests green on the test listener before production traffic moves.

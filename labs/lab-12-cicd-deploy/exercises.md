@@ -9,13 +9,13 @@ Command output for each exercise is in the screenshots.
 ![r7-alt pushed, sizes](../../screenshots/lab12/ex1.png)
 ![docker history](../../screenshots/lab12/ex1-2.png)
 
-Both sizes are taken from `describe-images` (`imageSizeInBytes`), with the local `docker image ls` sizes beside them for comparison.
+`describe-images` reports `imageSizeInBytes` = 0 for both. **Floci limitation:** it does not compute sizes. The local sizes are real: `r7` (nginx:1.27-alpine) is 73.6 MB, `r7-alt` (public.ecr.aws stable-alpine) is 101 MB. `docker history` shows 21 and 22 layers; nginx's main install layer is 38.7 MB in r7 and 51.8 MB in r7-alt, and my `COPY dist/` layer is about 40 kB in both.
 
 **Why the registry and local numbers differ.** The registry reports the size of the compressed layers it stores (what gets downloaded). The local daemon reports the uncompressed size on disk after extraction, which is always larger. The rest of the difference is that the two numbers count different things: the registry counts each layer once per image, while the local listing can include layers shared with other images and does not include the manifest. Between `r7` and `r7-alt` the difference itself is the base: both are nginx on Alpine, but different nginx versions and builds, so the base layers differ in size and count, while my one `COPY dist/` layer is the same few kilobytes in both (visible in `docker history`).
 
 ## Exercise 2 - Intermediate: immutable tags
 
-Set `IMAGE_TAG_MUTABILITY=IMMUTABLE` with `put-image-tag-mutability`, then tried to push **different** content under the existing tag `r7` (the `r7-alt` image retagged as `r7`). Result on this build: refused: r7 still points at its original digest. (On real ECR the push is rejected with `ImageTagAlreadyExistsException`.) The local `r7` tag was then put back on the real r7 image.
+Set `IMAGE_TAG_MUTABILITY=IMMUTABLE` with `put-image-tag-mutability`, then tried to push **different** content under the existing tag `r7` (the `r7-alt` image retagged as `r7`). **Observed, and really enforced:** the registry refused the push with `The image tag r7 already exists in the usms-enrolment repository and cannot be overwritten because the tag is immutable`, and `r7` still pointed at its original digest (`sha256:cb6cc079...`). On real ECR the error is `ImageTagAlreadyExistsException`. The local `r7` tag was then put back on the real r7 image.
 
 ![Immutable push attempt](../../screenshots/lab12/ex2.png)
 ![Unique tag per build](../../screenshots/lab12/ex2-2.png)
@@ -56,6 +56,8 @@ One thing I would also need on real AWS: the ALB's security group only allows 80
 ![Evidence document](../../screenshots/lab12/ex5.png)
 ![Retag and what it breaks](../../screenshots/lab12/ex5-2.png)
 
-**The deliberate break.** Retagged `r7` to the `r7-alt` image and pushed it. The new digest was appended to `outputs/lab-12-image-digest.txt` as a second `r7` line. Regenerating the document and diffing section 4 shows the registry's `r7` digest changed, while the service's task definition still says exactly the same thing: `.../usms-enrolment:r7`. Nothing was deployed.
+**The deliberate break.** Retagged `r7` to the `r7-alt` image and pushed it (the repository was back to MUTABLE). The new digest was appended to `outputs/lab-12-image-digest.txt` as a second `r7` line. Regenerating the document and diffing section 4 shows the registry's `r7` digest changed from `cb6cc079...` to `120edca7...`, with nothing else in the document flagging it. Nothing was deployed.
 
-**What the document can and cannot still prove.** It can still prove which source version each execution used, which builds ran, and which revision the service points at. It can no longer prove which bytes a task runs, because the revision names a tag and the tag now points somewhere else; a task started after the retag would run different code under the same revision. The only link that survives is the digest recorded at push time, which shows the tag was moved. A task definition that named the digest instead of the tag would not have this gap. Afterwards I pushed the original r7 image back under `r7` so the service and `verify-lab-12.sh` see the real r7 again.
+The running service is on `usms-enrolment:3`, which names `:r6`, not `:r7`, because the pipeline's Deploy stage never succeeded on Floci (report, Step 17). The point is the same for any revision that names a tag: a revision naming `:r7` would look identical before and after the retag.
+
+**What the document can and cannot still prove.** It can still prove which source version each execution used, which builds ran, and which revision the service points at. It can no longer prove which bytes a task runs, because the revision names a tag and the tag now points somewhere else; a task started after the retag would run different code under the same revision. The only link that survives is the digest recorded at push time, which shows the tag was moved. A task definition that named the digest instead of the tag would not have this gap. Afterwards I pushed the original r7 image back under `r7` (`r7 restored -> sha256:cb6cc079...`) so `verify-lab-12.sh` sees the real r7 again.
