@@ -58,6 +58,8 @@ The main ideas I used:
 
 ![Lab 12 architecture](../../screenshots/lab12/lab-12-architecture.png)
 
+*The diagram shows the intended design. The tasks labelled `usms-enrolment:4` are what the pipeline's Deploy stage would create on real AWS. On Floci, Deploy failed, so the service still runs `usms-enrolment:3` (r6), deployed by hand in Step 11.*
+
 ## 5. Implementation Procedure
 
 1. **Steps 1 to 3** - started Floci, read Lab 11's readiness file, sourced eleven env files, probed the deployment surface.

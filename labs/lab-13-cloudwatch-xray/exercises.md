@@ -53,7 +53,7 @@ The `USMS_EVENT ` prefix means the message is not pure JSON, so the JSON filter 
 
 `threshold_ever_breached` compares the observed maximum (for `Greater...` operators) or minimum (for `Less...`) with the threshold. Output: `outputs/lab-13-threshold-report.json`.
 
-Reading it: the composite has nulls, as expected. `usms-transcript-lag-high` has real observations from the emitter (the 3.10 s run breaches 2 s). The finding the exercise is after is the alarm whose threshold has never been approached, or that has no data at all: for those, the threshold is not based on anything observed yet. `usms-enrolment-queue-high` from Lab 06 is also listed because it starts with `usms-`; its metric gets no data in this lab, so its threshold is untested by real traffic.
+Reading it: there is no composite entry, because Floci could not create `usms-transcript-pipeline-down` (the script handles composites, but there was none to list). `usms-transcript-lag-high` has real observations from the emitter: 12 samples, max 3.1 s, so its 2 s threshold has been breached. `usms-notify-silence` has 18 samples with a minimum of 0, so it has been breached too: those are the `defaultValue=0` points from non-matching log lines, and the quiet periods when it really fired. The finding the exercise is after is the alarm whose threshold has never been approached, or that has no data at all: for those, the threshold is not based on anything observed yet. `usms-enrolment-queue-high` from Lab 06 is also listed because it starts with `usms-`; its metric gets no data in this lab, so its threshold is untested by real traffic.
 
 ## Exercise 4 - Challenge: observability plan
 
@@ -63,11 +63,11 @@ Written in `notes/lab-13-observability-plan.md`.
 
 ## Exercise 5 - Integration: alarm actions for the alerting lab
 
-1. `outputs/lab-13-alarm-actions-draft.json`: for each of the three alarms, its meaning, urgency (the composite pages, the two children open tickets) and placeholder SNS ARNs `arn:aws:sns:us-east-1:<account>:usms-<topic>`, where the account and region come from `configs/lab-01.env` and `configs/course.env`.
-2. Validated with one `describe-alarms` call for all three names and a regex for six-field SNS ARNs; result in `outputs/lab-13-draft-validation.txt`, mismatches reported rather than fixed.
-3. **Not applied.** `AlarmActions` is still `[]` on all three, shown in the screenshot. `put-metric-alarm` replaces the whole alarm, so applying actions with a partial definition would silently drop the Step 19 settings.
+1. `outputs/lab-13-alarm-actions-draft.json`: for each of the three designed alarms, its meaning, urgency (the composite pages, the two children open tickets) and placeholder SNS ARNs `arn:aws:sns:us-east-1:<account>:usms-<topic>`, where the account and region come from `configs/lab-01.env` and `configs/course.env`.
+2. Validated with one `describe-alarms` call for all three names and a regex for six-field SNS ARNs; result in `outputs/lab-13-draft-validation.txt`: `mismatches: 1`. The mismatch is the composite, which the draft names but Floci could not create. It is reported rather than "fixed" by deleting it from the draft, because on real AWS it is the alarm that should page.
+3. **Not applied.** `AlarmActions` is still `[]` on the two alarms that exist, shown in the screenshot. `put-metric-alarm` replaces the whole alarm, so applying actions with a partial definition would silently drop the Step 19 settings.
 4. Ran the emitter six times with mixed faculties and latencies (0.48 to 3.40 s) and saved `get-metric-statistics` for `TranscriptLagSeconds` to `outputs/lab-13-latency-baseline.json`. Maximum observed: 3.4 s.
-5. `outputs/lab-13-alerting-readiness.txt` is written by one re-runnable `{ ...; } | tee` block: alarm names and missing-data policies, the composite rule, the namespace and five metric names, the notifier's alias version and tracing mode, X-Ray and Insights support, the validation result and the maximum latency. `git check-ignore -v` shows it is covered by `outputs/*`.
+5. `outputs/lab-13-alerting-readiness.txt` is written by one re-runnable `{ ...; } | tee` block. It records the alarm names and missing-data policies, and the composite rule (`None`, since Floci has no composite). It also has the namespace and five metric names, the notifier's alias (version 4, tracing `Active`), X-Ray and Insights support (`no`, `no`), the validation result and the maximum latency (3.4 s). `git check-ignore -v` shows it is covered by `outputs/*`.
 
 ![Draft, validated, not applied](../../screenshots/lab13/ex5.png)
 ![Baseline and readiness file](../../screenshots/lab13/ex5-2.png)
