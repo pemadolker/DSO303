@@ -1,0 +1,58 @@
+{
+  "name": "usms-transcript-notifier",
+  "id": "65738860662597d8",
+  "trace_id": "1-6b095a64-4c09633ed0ca0b929546e56c",
+  "start_time": 1795775139.7,
+  "end_time": 1795775139.82,
+  "origin": "AWS::Lambda::Function",
+  "annotations": {
+    "faculty": "science",
+    "stage": "notify",
+    "transcript_bytes": 2184,
+    "readable": true
+  },
+  "metadata": {
+    "usms": {
+      "key": "transcripts/science/stu-00417.json",
+      "bucket": "usms-student-data",
+      "alias": "live"
+    }
+  },
+  "subsegments": [
+    {
+      "id": "e9746ffaf81897c8",
+      "name": "s3-head-object",
+      "start_time": 1795775139.702,
+      "end_time": 1795775139.72,
+      "namespace": "aws",
+      "aws": {
+        "operation": "HeadObject",
+        "bucket_name": "usms-student-data",
+        "region": "us-east-1"
+      }
+    },
+    {
+      "id": "28a4f912ab9dab9b",
+      "name": "render-pdf",
+      "start_time": 1795775139.722,
+      "end_time": 1795775139.796,
+      "namespace": "remote",
+      "metadata": {
+        "usms": {
+          "pages": 3,
+          "renderer": "wkhtmltopdf"
+        }
+      }
+    },
+    {
+      "id": "a3858b8e14f4d0b2",
+      "name": "cloudwatch-put-metric-data",
+      "start_time": 1795775139.798,
+      "end_time": 1795775139.809,
+      "namespace": "aws",
+      "aws": {
+        "operation": "PutMetricData"
+      }
+    }
+  ]
+}
