@@ -41,25 +41,6 @@ The main ideas I used in this lab:
 
 ## 4. System Architecture / Design
 
-```text
- STUDENT  GET /transcripts/2026/STU-00417.json
-    |
-    v  CloudFront edge (usms-transcript-cdn)
- (1) viewer-request  usms-edge-viewer-request:1   lowercase URI; no x-usms-student -> 403, origin never hit
-    |  allow
- [edge cache] --miss--> usms-student-data (S3 origin)
-                               |
- (3) origin-response usms-edge-origin-response:1  4 security headers + cache-control + x-usms-edge-chain
-                               |
-                         cached, back to viewer
-
- REGIONAL: put-object transcripts/*.json -> s3:ObjectCreated (prefix transcripts/, suffix .json)
-           -> usms-transcript-notifier:live (python3.12) -> /aws/lambda/usms-transcript-notifier
-
- IAM: usms-lambda-exec-role trusts lambda.amazonaws.com AND edgelambda.amazonaws.com
-      resource policy on notifier:live -> only s3.amazonaws.com, only this bucket, only this account
-```
-
 ![Lab 10 architecture](../../screenshots/lab10/lab-10-architecture.png)
 
 ## 5. Implementation Procedure

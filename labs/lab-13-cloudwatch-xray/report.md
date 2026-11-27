@@ -49,19 +49,6 @@ The main ideas I used:
 
 ## 4. System Architecture / Design
 
-```text
- SOURCES                        LOGS                                  METRICS (USMS/Application)
- notifier:live (v2 metrics,  -> /aws/lambda/usms-transcript-notifier  NotifyCount (filter usms-notify-count)
-   v3 active tracing)            14 days                              CentralErrorCount (filter usms-central-errors)
- usms-emit-telemetry.sh      -> /usms/central/application 30 days     TranscriptsProcessed {Faculty,Stage} + total
- put-metric-data / segments                                            TranscriptLagSeconds {Stage}, EdgeDenyCount
-                                                                            |
- X-RAY: segments + subsegments, annotations faculty/stage          ALARMS: usms-transcript-lag-high (Max > 2 s, notBreaching)
-        sampling rule usms-transcripts-sampling (10% + 2/s)                usms-notify-silence (Sum < 1 for 15 min, breaching)
-                                                                           usms-transcript-pipeline-down = lag OR silence
- IAM: USMSObservabilityWrite on usms-lambda-exec-role and usms-ec2-app-role      DASHBOARD: usms-overview
-```
-
 ![Lab 13 architecture](../../screenshots/lab13/lab-13-architecture.png)
 
 **Note on the diagram:** it shows the intended design. Three parts were designed but do not exist on Floci:

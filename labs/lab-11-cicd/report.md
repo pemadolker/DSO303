@@ -44,21 +44,6 @@ I used S3 as the source because CodeCommit has been closed to new customers sinc
 
 ## 4. System Architecture / Design
 
-```text
- labs/lab-11-cicd/app  --usms-pack-source.sh-->  s3://usms-pipeline-artifacts/source/usms-enrolment-src.zip
-                                                  (versioned: r3, r4, r5 ...)
-                                                        |
- usms-enrolment-pipeline  (role usms-codepipeline-role, PassRole -> codebuild only)
-   Source  (S3)        --> SourceOutput/<zip>
-   Build   (CodeBuild) --> usms-enrolment-build (role usms-codebuild-role)
-                             install > pre_build (VERSION, JSON, container, port 80)
-                             > build (dist/, release + time stamped, build-metadata.json)
-                             > post_build (8 smoke tests)
-                        --> BuildOutput/<zip>  = contents of dist/
-   logs: /aws/codebuild/usms-enrolment-build
- USMSCodeBuildBase: own logs, artifact bucket, explicit Deny s3:* on usms-student-data
-```
-
 ![Lab 11 architecture](../../screenshots/lab11/lab-11-architecture.png)
 
 ## 5. Implementation Procedure

@@ -42,20 +42,6 @@ The main ideas I used:
 
 ## 4. System Architecture / Design
 
-```text
- source zip (S3, versioned)
-     |
- usms-enrolment-pipeline
-   Source  -> SourceOutput
-   Build   -> builds image <ECR_URI>:<release>, pushes it, writes imagedefinitions.json
-              -> BuildOutput (imagedefinitions.json at the root)
-   Deploy  (ECS) -> registers usms-enrolment:<N+1> with the new image -> update-service
-     |
- ECR usms-enrolment (MUTABLE, scanOnPush, AES256)   ECS usms-ecs-cluster / usms-enrolment-svc
- USMSCodeBuildBase v2 (ECR push)   USMSCodePipelineBase v2 (UpdateService + PassRole to ecs-tasks)
- CodeDeploy blue/green: templates/lab-12-appspec.yaml + deployment group (conceptual)
-```
-
 ![Lab 12 architecture](../../screenshots/lab12/lab-12-architecture.png)
 
 *The diagram shows the intended design. The tasks labelled `usms-enrolment:4` are what the pipeline's Deploy stage would create on real AWS. On Floci, Deploy failed, so the service still runs `usms-enrolment:3` (r6), deployed by hand in Step 11.*
