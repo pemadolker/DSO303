@@ -1,6 +1,6 @@
 # Lab 11 Notes: CI/CD Pipeline with CodePipeline and CodeBuild
 
-Support path: see `outputs/lab-11-support-probe.txt` (`USMS_CICD_SUPPORT_PATH`).
+Support path: A (`outputs/lab-11-support-probe.txt`). Both APIs exist, but Floci only records builds and executions: every build is `SUCCEEDED` in 0 seconds with an empty log and no artifact, even on broken source. Observed vs recorded: buildspec behaviour observed only through the local runner (Step 14); CodeBuild/CodePipeline recorded.
 
 ## Steps 1-4
 - Ten env files sourced; Lab 04/05 names (cluster, service, container `enrolment-api`, target group, exec role) all present.
@@ -19,11 +19,11 @@ Support path: see `outputs/lab-11-support-probe.txt` (`USMS_CICD_SUPPORT_PATH`).
 ## Steps 9-10: CodeBuild role and project
 - Trust: `codebuild.amazonaws.com` with `aws:SourceAccount`. Policy: own log group (both the group ARN and `:*`), the artifact bucket, and an explicit `Deny s3:*` on `usms-student-data`. An explicit Deny wins over any Allow attached later, so builds can never read student records even if someone widens the policy.
 - Project template written with an unquoted heredoc; `grep -c '\$'` = 0 proves `${BUILD_ROLE_ARN}` was substituted.
-- Build image: Floci pulls the project image by name; `aws/codebuild/standard:7.0` is not public. Tagged `python:3.12-slim` locally as that name. It has bash, python3, sed and coreutils, which is all the buildspec uses. It has no Docker, which matters in Lab 12.
+- Build image: `aws/codebuild/standard:7.0` is not public, so I tagged `python:3.12-slim` locally as that name to keep the project definition as written. Floci never ran a build container in the end (see Steps 11-13), so this only matters on a Floci version that does execute builds.
 
 ## Steps 11-13: Package, standalone build, logs
 - `usms-pack-source.sh` zips the **contents** of the app dir so `buildspec.yml` is at the zip root. If the zip had `app/buildspec.yml` the build would fail with "buildspec not found".
-- The standalone build: polled `batch-get-builds` until a terminal status; read phases, log group `/aws/codebuild/usms-enrolment-build`, and the artifact at `build/usms-enrolment-build.zip`.
+- The standalone build `usms-enrolment-build:1`: `SUCCEEDED` on the first poll, every phase 0 s, log group/stream named but no events, nothing under `build/`. So the buildspec never ran; Floci only recorded the build. From here on, "passed" means passed locally.
 
 ## Step 14: Local runner
 - `usms-buildspec-run.sh` turns the buildspec into one bash script (`set -Eeuo pipefail`) and runs phases in order. It uses PyYAML if installed, otherwise a minimal parser for exactly the subset this course writes. It does not implement `finally` (Exercise 2).
@@ -33,14 +33,15 @@ Support path: see `outputs/lab-11-support-probe.txt` (`USMS_CICD_SUPPORT_PATH`).
 ## Steps 15-18: Pipeline
 - `usms-codepipeline-role`: trust `codepipeline.amazonaws.com`; policy = artifact store, start/watch **one** project, `iam:PassRole` on `usms-codebuild-role` only with `iam:PassedToService = codebuild.amazonaws.com`.
 - Pipeline: Source (S3, `PollForSourceChanges=false`) → SourceOutput → Build (CodeBuild) → BuildOutput.
-- After `update-project` to `CODEPIPELINE`, a plain `start-build` fails ("Project cannot be built directly"), which is the evidence the project now belongs to the pipeline. A source override still works.
+- After `update-project` to `CODEPIPELINE`, real AWS refuses a plain `start-build` ("Project cannot be built directly"). Floci accepted it (`usms-enrolment-build:2`), so this is recorded, not enforced. The source-override build was accepted too (`:3`).
 
 ## Step 19: r4, then r5
-- r4: execution polled to completion; newest BuildOutput zip has `build-metadata.json` with release r4.
-- Your turn r5: three uploads by then (r3, r4, r5) plus whatever later steps add. Source versions = uploads. BuildOutput objects = executions that finished Build. They differ because an upload does not start anything with polling off, and a failed build leaves no artifact. (The exact counts are in the r5 screenshot and in the report.)
+- r4: execution `Succeeded` on the first poll, but no BuildOutput object anywhere in the bucket (only `source/usms-enrolment-src.zip`). Rebuilt locally from the exact source version (`fc0ae95b-...`) → `build-metadata.json` says release r4. That proves the bytes, not that Floci built them.
+- Your turn r5: 4 source versions, 0 BuildOutput objects. On AWS: source versions = uploads, BuildOutput objects = executions that got through Build; they differ because an upload with polling off starts nothing and a failed build leaves no artifact. Here it is 0 because Floci never writes one.
 
 ## Step 20: Deliberate failure
-- Container renamed to `enrolment-api-v2` → Build stage Failed → `batch-get-builds` phases → `PRE_BUILD FAILED` → the container check. Fixed, local runner passes, pipeline re-run.
+- Container renamed to `enrolment-api-v2` → Floci: both stages `Succeeded`, failed-phases query empty. On AWS: Build `Failed` → `PRE_BUILD FAILED` → the container check in the log.
+- The same broken config fails locally (Exercise 3 screenshot: names both values, exit 1). Fixed, local runner passes, pipeline re-run (`Succeeded`).
 
 ## Step 21 / Section 8
 - `configs/lab-11.env`: 26 exports.

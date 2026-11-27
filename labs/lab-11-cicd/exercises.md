@@ -9,7 +9,7 @@ Created `labs/lab-11-cicd/app-results/` with `VERSION` (r1), `src/index.html` an
 ![Results source and local build](../../screenshots/lab11/ex1.png)
 ![Results build in CodeBuild](../../screenshots/lab11/ex1-2.png)
 
-The artifact `build/usms-results-build.zip` has `build-metadata.json` with `"service": "results"`, so it is easy to tell apart from the enrolment build.
+Locally, `build-metadata.json` says `"service": "results"`, so it is easy to tell apart from the enrolment build. In CodeBuild the build was `SUCCEEDED` straight away, but downloading `build/usms-results-build.zip` gave `NoSuchKey`. Floci records builds without running them, so there is no artifact (see the report, Steps 9 to 13).
 
 **Does `USMSCodeBuildBase` already permit this build?** Not completely. The S3 part is fine because it covers the whole `usms-pipeline-artifacts` bucket, but the logs statement only names `/aws/codebuild/usms-enrolment-build`. On real AWS this build would fail to create its log stream in `/aws/codebuild/usms-results-build`. It works here only because Floci does not enforce IAM. The fix would be a policy version that adds the second log group, or a role per project. I did not create that version, because Lab 12 publishes v2 of this policy and its verify script expects the default to be exactly v2.
 
@@ -19,10 +19,14 @@ The artifact `build/usms-results-build.zip` has `build-metadata.json` with `"ser
 
 ![post_build and finally](../../screenshots/lab11/ex2.png)
 ![Broken copy built in CodeBuild](../../screenshots/lab11/ex2-2.png)
+![Broken copy built locally](../../screenshots/lab11/ex2-3.png)
 
-**How I tested it.** The local runner from Step 14 does not implement `finally`, so a local run cannot prove anything about it. I made a copy of the app in `outputs/ex2-app/` (the real source was not touched), added a deliberately failing test (`t "..." "false"`) to the copy, uploaded it as `source/usms-enrolment-src-ex2.zip`, and ran a CodeBuild build with `--source-type-override S3` and an `--artifacts-override` to `ex2/`, because the project now belongs to the pipeline. The phases table shows `POST_BUILD` failed, and the summary in the artifact reads `tests_exit=1`.
+**How I tested it.** I made a copy of the app in `outputs/ex2-app/` (the real source was not touched) and added a deliberately failing test (`t "..." "false"`) to the copy.
 
-**What this claim covers.** It proves `finally` runs after a failed `commands` list on the build service I ran it on. It does not prove the local runner behaves the same, and the `finally` block does not rescue the build: the build is still FAILED, it only made sure the summary exists. (If an artifact is missing for a failed build, that is the build service's choice about uploading artifacts after a failed phase, which is recorded in the screenshot rather than assumed.)
+- **In CodeBuild:** Floci ignored `--source-location-override`, so I uploaded the broken copy to the project's own source key for one build (`usms-enrolment-build:10`) and put the good source back straight after. Floci said `SUCCEEDED` for every phase, the log stream was empty and there was no artifact, so no `build-summary.txt`. The broken test never ran.
+- **Locally:** the local runner on the same copy fails in `post_build`. It shows `FAIL deliberately failing test (Ex2)` and `smoke tests failed: 1`, and exits 1, so the `SMOKE_RC` change still fails the phase.
+
+**What this claim covers.** I can claim only that `post_build` fails when a test fails, and only locally. I cannot claim the `finally` block ran: the local runner does not implement `finally`, and Floci did not run the build. On real AWS, CodeBuild runs `finally` after the failed `commands`, writes `build-summary.txt` with `tests_exit=1`, and the build still ends `FAILED`. `finally` does not rescue a build; it only makes sure the summary exists. Whether the summary is then uploaded depends on CodeBuild's artifact upload after a failed phase, which I could not observe here.
 
 ## Exercise 3 - Problem solving: a robust configuration check
 
@@ -58,4 +62,4 @@ The `build` phase now writes `dist/imagedefinitions.json` with one Python line: 
 ![imagedefinitions and 8 smoke tests](../../screenshots/lab11/ex5.png)
 ![Artifact root and readiness file](../../screenshots/lab11/ex5-2.png)
 
-Ran the pipeline, downloaded the newest BuildOutput zip and confirmed `imagedefinitions.json` is at the root (not under `dist/`). The artifact key and the file contents are in `outputs/lab-11-lab08b-readiness.txt`, which Lab 12 Step 1 reads; it is git-ignored.
+I ran the pipeline (`Succeeded`). Floci stored no BuildOutput object, so I rebuilt the artifact locally from the exact source version the pipeline was given, with the same buildspec, and confirmed `imagedefinitions.json` is at the root (not under `dist/`). The file's contents and the source of the artifact (rebuilt locally, not from S3) are in `outputs/lab-11-lab08b-readiness.txt`, which Lab 12 Step 1 reads; it is git-ignored.
