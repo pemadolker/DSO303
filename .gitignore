@@ -30,3 +30,4 @@ Thumbs.db
 .idea/
 labs/lab-11-cicd/app/dist/
 labs/lab-11-cicd/app-results/dist/
+docker-compose.yml.bak-*

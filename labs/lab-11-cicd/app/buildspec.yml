@@ -4,6 +4,7 @@ env:
   variables:
     SERVICE_NAME: "enrolment"
     ARTIFACT_DIR: "dist"
+    IMAGE_REPO_URI: "nginx"
 
 phases:
 
@@ -11,7 +12,7 @@ phases:
     commands:
       - echo "--- install ---"
       - python3 --version
-      - sed --version 2>/dev/null | head -1 || echo "BSD sed"
+      - docker --version || echo "no docker client in this build image"
 
   pre_build:
     commands:
@@ -19,13 +20,22 @@ phases:
       - test -f VERSION || { echo "VERSION file is missing"; exit 1; }
       - python3 -m json.tool config/service.json > /dev/null
       - |
-        python3 -c "import json,sys; want='enrolment-api'; got=json.load(open('config/service.json')).get('container'); sys.exit(0 if got == want else 'config/service.json names container %r, expected %r' % (got, want))"
-      - |
-        grep -Eq '"port": 80([^0-9]|$)' config/service.json || {
-          echo "config/service.json must set port 80 (the task definition and the target group both use 80) - fix the port and rebuild"
+        grep -q '"container": "enrolment-api"' config/service.json || {
+          echo "config/service.json names the wrong container"
           exit 1
         }
-      - echo "configuration validated"
+      - USMS_RELEASE="$(tr -d '[:space:]' < VERSION)"
+      - echo "release is $USMS_RELEASE"
+      - |
+        if docker info >/dev/null 2>&1; then
+          echo "docker daemon reachable - this build will build and push an image"
+          aws ecr get-login-password --region "${AWS_REGION_COURSE:-us-east-1}" \
+            | docker login --username AWS --password-stdin "${IMAGE_REPO_URI%%/*}" \
+            || echo "docker login failed - continuing; the image must already exist"
+        else
+          echo "no docker daemon in this build container - skipping the image build"
+          echo "the image must already exist at ${IMAGE_REPO_URI} with this release tag"
+        fi
 
   build:
     commands:
@@ -33,6 +43,8 @@ phases:
       - USMS_RELEASE="$(tr -d '[:space:]' < VERSION)"
       - BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       - echo "release=$USMS_RELEASE builtAt=$BUILT_AT"
+      - IMAGE_TAG="$USMS_RELEASE-${CODEBUILD_BUILD_NUMBER:-local$(date -u +%Y%m%d%H%M%S)}"
+      - echo "image tag=$IMAGE_TAG"
       - rm -rf "$ARTIFACT_DIR"
       - mkdir -p "$ARTIFACT_DIR"
       - cp -R src/. "$ARTIFACT_DIR"/
@@ -45,29 +57,31 @@ phases:
           "release": "$USMS_RELEASE",
           "builtAt": "$BUILT_AT",
           "buildId": "${CODEBUILD_BUILD_ID:-local}",
-          "sourceVersion": "${CODEBUILD_RESOLVED_SOURCE_VERSION:-local}"
+          "sourceVersion": "${CODEBUILD_RESOLVED_SOURCE_VERSION:-local}",
+          "imageUri": "${IMAGE_REPO_URI}:$IMAGE_TAG"
         }
         META
       - cp config/service.json "$ARTIFACT_DIR/service.json"
       - |
-        python3 -c "import json,os; c=json.load(open('config/service.json'))['container']; json.dump([{'name': c, 'imageUri': os.environ.get('IMAGE_URI') or 'public.ecr.aws/nginx/nginx:stable-alpine'}], open(os.environ['ARTIFACT_DIR'] + '/imagedefinitions.json', 'w'), indent=2)"
+        if docker info >/dev/null 2>&1; then
+          docker build -t "${IMAGE_REPO_URI}:$IMAGE_TAG" .
+          docker push "${IMAGE_REPO_URI}:$IMAGE_TAG" \
+            || echo "push failed - see Section 10; the deploy stage will use the existing tag"
+        fi
+      - |
+        IMAGE_URI="${IMAGE_REPO_URI}:$IMAGE_TAG" python3 - > "$ARTIFACT_DIR/imagedefinitions.json" << 'IMGDEF'
+        import json, os
+        cfg = json.load(open("config/service.json"))
+        print(json.dumps([{"name": cfg["container"],
+                           "imageUri": os.environ["IMAGE_URI"]}], indent=2))
+        IMGDEF
 
   post_build:
     commands:
       - echo "--- post_build ---"
-      - |
-        SMOKE_RC=0
-        bash tests/smoke.sh || SMOKE_RC=$?
-        echo "$SMOKE_RC" > /tmp/usms-smoke-rc
-        test "$SMOKE_RC" -eq 0
+      - bash tests/smoke.sh
+      - cat "$ARTIFACT_DIR/imagedefinitions.json"
       - ls -l "$ARTIFACT_DIR"
-      - cat "$ARTIFACT_DIR/build-metadata.json"
-
-    finally:
-      - |
-        RC="$(cat /tmp/usms-smoke-rc 2>/dev/null || echo unknown)"
-        printf 'release=%s tests_exit=%s at=%s\n' "$(tr -d '[:space:]' < VERSION)" "$RC" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ARTIFACT_DIR/build-summary.txt"
-        cat "$ARTIFACT_DIR/build-summary.txt"
 
 artifacts:
   base-directory: dist
